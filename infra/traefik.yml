@@ -1,0 +1,14 @@
+api:
+  dashboard: false
+
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: platform
+
+log:
+  level: WARN

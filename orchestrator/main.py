@@ -67,6 +67,17 @@ class MeResponse(BaseModel):
     registered: bool
 
 
+class IssueRequest(BaseModel):
+    telegram_id: int
+    repo_name: str
+    title: str
+    body: str
+
+
+class IssueResponse(BaseModel):
+    issue_url: str
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _gitea_auth() -> tuple[str, str]:
@@ -171,6 +182,28 @@ async def list_apps(telegram_id: int) -> list[AppInfo]:
         )
         for r in resp.json()
     ]
+
+
+@app.post("/issue", response_model=IssueResponse)
+async def create_issue(req: IssueRequest) -> IssueResponse:
+    user = await db.get_user(req.telegram_id)
+    if not user or not user["verified"]:
+        raise HTTPException(status_code=403, detail="not_registered")
+
+    org = user["gitea_org"]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{GITEA_URL}/api/v1/repos/{org}/{req.repo_name}/issues",
+                auth=_gitea_auth(),
+                json={"title": req.title, "body": req.body},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Gitea error: {e}")
+
+    return IssueResponse(issue_url=data["html_url"])
 
 
 @app.get("/me", response_model=MeResponse)

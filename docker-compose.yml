@@ -185,6 +185,7 @@ services:
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       ORCHESTRATOR_URL: http://orchestrator:8000
+      INVITE_CODE: ${INVITE_CODE:-}
     depends_on:
       - orchestrator
     restart: unless-stopped

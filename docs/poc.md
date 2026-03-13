@@ -18,9 +18,9 @@ Conversation loop only: Telegram bot → FastAPI orchestrator → Ollama → rep
 
 `standards/` YAML files (naming, patterns, security) loaded by the orchestrator at startup and injected into every LLM system prompt — the opinionated layer that makes it a platform, not a generic assistant.
 
-**Phase 3 — First agent**
+**Phase 3 — First agent** ✅
 
-Add the coder-agent. It receives a task spec (structured JSON from the orchestrator), uses the LLM + Aider/CodeAct to scaffold a repo, commits to Gitea, and returns the PR link. Wire up Woodpecker CI to trigger builds on push.
+`agents/coder/`: receives a task spec extracted by the orchestrator's intent classifier, uses the LLM to scaffold a repo (files + Dockerfile + `.woodpecker.yml`), commits to Gitea via API, and returns the repo URL. Woodpecker CI triggers a pipeline on every push. New services: `gitea`, `woodpecker-server`, `woodpecker-agent`, `coder`; per-user Gitea orgs with Telegram code-based registration enforce tenancy.
 
 **Phase 4 — Infra + review agents**
 
@@ -41,6 +41,8 @@ Add Prometheus + Grafana for the platform itself, and a minimal Next.js dashboar
 **Ollama** exposes any local model (Mistral, Llama 3, Qwen2.5-Coder) via HTTP with no setup overhead. Qwen2.5-Coder-32B is the best choice for the coder agent if VRAM allows; Llama 3.1 8B handles intent classification well.
 
 **Qdrant** is the vector store for RAG over architecture standards, past project patterns, and documentation — prevents hallucination on platform-specific questions.
+
+**Tenancy** is enforced at the Gitea organisation level. Each registered user gets a private Gitea org (`user-<telegram_id>`). The orchestrator looks up the user's org on every request and scopes all repo operations to it. Registration uses a 6-digit verification code exchanged over Telegram — no email or external identity provider required.
 
 ---
 

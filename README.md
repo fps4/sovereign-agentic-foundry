@@ -15,20 +15,20 @@ See [docs/poc.md](docs/poc.md) for the full design.
 
 ```bash
 cp .env.example .env
-# Set TELEGRAM_BOT_TOKEN in .env
 ```
+
+Edit `.env` and set:
+- `TELEGRAM_BOT_TOKEN` — from @BotFather
+- `DS1_HOST` — hostname or IP of your Docker host
+- `GITEA_ADMIN_PASS` — password for the Gitea admin account (choose any)
 
 **2. Pull the Ollama model**
 
 ```bash
-# Local Docker host
-./scripts/pull_models.sh
-
-# Remote Docker host
 DOCKER_HOST=ssh://ds1 ./scripts/pull_models.sh
 ```
 
-Default model is `llama3.1:8b`. To pull a different model:
+Default is `llama3.1:8b`. To use a different model:
 
 ```bash
 DOCKER_HOST=ssh://ds1 ./scripts/pull_models.sh qwen2.5-coder:7b
@@ -37,44 +37,80 @@ DOCKER_HOST=ssh://ds1 ./scripts/pull_models.sh qwen2.5-coder:7b
 **3. Start the stack**
 
 ```bash
-# Local
-docker compose up -d
-
-# Remote
 DOCKER_HOST=ssh://ds1 docker compose up -d
 ```
 
-**4. Verify**
+The `gitea-init` service runs automatically on first start and creates the Gitea admin user using `GITEA_ADMIN_USER` / `GITEA_ADMIN_PASS` / `GITEA_ADMIN_EMAIL` from `.env`. It exits after the user is created; on subsequent restarts it detects the user already exists and skips.
+
+**4. One-time: connect Woodpecker to Gitea**
+
+Woodpecker authenticates via Gitea OAuth2. This requires creating an OAuth2 app in Gitea once:
+
+1. Open Gitea at `http://<DS1_HOST>:3000` and log in (`GITEA_ADMIN_USER` / `GITEA_ADMIN_PASS`)
+2. Go to **User menu → Settings → Applications → OAuth2 Applications**
+3. Fill in:
+   - **Application name**: `woodpecker`
+   - **Redirect URI**: `http://<DS1_HOST>:8080/authorize`
+4. Click **Create Application** — Gitea shows the Client ID and Client Secret **once**
+5. Add both to `.env`:
+   ```
+   WOODPECKER_GITEA_CLIENT=<client-id>
+   WOODPECKER_GITEA_SECRET=<client-secret>
+   ```
+6. Restart Woodpecker:
+   ```bash
+   DOCKER_HOST=ssh://ds1 docker compose up -d woodpecker-server woodpecker-agent
+   ```
+
+Open `http://<DS1_HOST>:8080` — you'll be redirected to Gitea to authorise. Log in as `GITEA_ADMIN_USER` and the Woodpecker dashboard loads.
+
+> If you lose the secret, delete the OAuth2 app in Gitea and create a new one.
+> The `platform` user is pre-configured as Woodpecker admin via `WOODPECKER_ADMIN` — no open registration needed.
+
+**5. Verify**
 
 ```bash
 DOCKER_HOST=ssh://ds1 docker compose ps
 ```
 
-All services should show `healthy` or `Up`. Then open Telegram, find your bot, and send `/start`.
+All services should show `healthy` or `Up`.
+
+Open Telegram, find your bot, and send `/start`, then `/register`. Reply with the verification code. Once verified, describe what you want to build:
+
+> *build me a REST API for managing users in Python*
+
+The bot scaffolds the project, pushes it to your private Gitea org, and replies with the repo URL. Woodpecker CI triggers a pipeline on the next push to `main`.
+
+---
 
 ## Services
 
-| Service | Description |
-|---|---|
-| `traefik` | Reverse proxy, routes HTTP traffic on port 80 |
-| `postgres` | Database for workflow state (Phase 2+) |
-| `ollama` | Local LLM inference |
-| `orchestrator` | FastAPI + LangGraph, handles chat requests |
-| `telegram-bot` | Telegram polling bot, relays messages to orchestrator |
+| Service | Port | Description |
+|---|---|---|
+| `traefik` | 80 | Reverse proxy, routes external HTTP to the orchestrator |
+| `postgres` | — | Database for workflow state |
+| `ollama` | — | Local LLM inference |
+| `gitea` | 3000 | Self-hosted Git service |
+| `gitea-init` | — | One-shot init container: creates the Gitea admin user |
+| `woodpecker-server` | 8080 | CI server and web UI |
+| `woodpecker-agent` | — | CI runner, executes pipelines via Docker |
+| `coder` | — | Coder agent: LLM scaffold → Gitea commit |
+| `orchestrator` | — | FastAPI + LangGraph, intent classification + chat |
+| `telegram-bot` | — | Telegram polling bot |
 
 ## Useful commands
 
 ```bash
-# Logs
+# All logs
 DOCKER_HOST=ssh://ds1 docker compose logs -f
 
-# Logs for a single service
+# Single service
 DOCKER_HOST=ssh://ds1 docker compose logs -f orchestrator
 
-# Health check
-curl http://<ds1-ip>/health
+# Health check (via Traefik)
+curl http://<DS1_HOST>/health
 
-# Stop
+# Stop everything
 DOCKER_HOST=ssh://ds1 docker compose down
 ```
 
@@ -83,13 +119,20 @@ DOCKER_HOST=ssh://ds1 docker compose down
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Bot token from @BotFather |
+| `DS1_HOST` | Yes | `localhost` | Hostname/IP of the Docker host |
 | `POSTGRES_PASSWORD` | No | `changeme` | Postgres password |
-| `OLLAMA_MODEL` | No | `llama3.1:8b` | Model used by the orchestrator |
+| `OLLAMA_MODEL` | No | `llama3.1:8b` | Model used by orchestrator and coder |
+| `GITEA_ADMIN_USER` | No | `platform` | Gitea admin username |
+| `GITEA_ADMIN_PASS` | Yes | — | Gitea admin password (auto-creates user on first start); also used for all Gitea API calls in the registration flow |
+| `GITEA_ADMIN_EMAIL` | No | `admin@platform.local` | Gitea admin email |
+| `WOODPECKER_GITEA_CLIENT` | Step 4 | — | Gitea OAuth2 client ID |
+| `WOODPECKER_GITEA_SECRET` | Step 4 | — | Gitea OAuth2 client secret |
+| `WOODPECKER_AGENT_SECRET` | No | `changeme` | Shared secret between Woodpecker server and agent |
 
 ## Build phases
 
 - **Phase 1** ✅ Conversation loop: Telegram → orchestrator → Ollama → reply
 - **Phase 2** ✅ Architecture standards: YAML rules injected into every LLM prompt
-- **Phase 3** Coder agent: scaffolds repos, commits to Gitea, triggers CI
+- **Phase 3** ✅ Coder agent: scaffolds repos, commits to Gitea, triggers Woodpecker CI
 - **Phase 4** Infra + review agents: OpenTofu provisioning, Semgrep/Trivy gate
 - **Phase 5** Observability + web hub: Prometheus, Grafana, Next.js dashboard

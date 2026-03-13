@@ -40,6 +40,116 @@ services:
     networks:
       - platform
 
+  gitea:
+    image: gitea/gitea:latest
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__database__PATH: /data/gitea/gitea.db
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__DOMAIN: ${DS1_HOST:-localhost}
+      GITEA__server__ROOT_URL: "http://${DS1_HOST:-localhost}:3000/"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+    volumes:
+      - gitea_data:/data
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3000/api/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - platform
+
+  gitea-init:
+    image: gitea/gitea:latest
+    user: "1000:1000"
+    volumes:
+      - gitea_data:/data
+    environment:
+      GITEA_WORK_DIR: /data
+      GITEA_CUSTOM: /data/gitea
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__database__PATH: /data/gitea/gitea.db
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
+      GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
+      GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@platform.local}
+    command:
+      - sh
+      - -c
+      - "gitea admin user create --admin --username $$GITEA_ADMIN_USER --password $$GITEA_ADMIN_PASS --email $$GITEA_ADMIN_EMAIL --must-change-password=false || echo 'Admin user already exists, skipping'"
+    depends_on:
+      gitea:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - platform
+
+  woodpecker-server:
+    image: woodpeckerci/woodpecker-server:v3
+    extra_hosts:
+      - "${DS1_HOST:-localhost}:host-gateway"
+    environment:
+      WOODPECKER_OPEN: "false"
+      WOODPECKER_ADMIN: ${GITEA_ADMIN_USER:-platform}
+      WOODPECKER_GITEA: "true"
+      WOODPECKER_GITEA_URL: "http://${DS1_HOST:-localhost}:3000"
+      WOODPECKER_GITEA_CLIENT: ${WOODPECKER_GITEA_CLIENT:-}
+      WOODPECKER_GITEA_SECRET: ${WOODPECKER_GITEA_SECRET:-}
+      WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-changeme}
+      WOODPECKER_HOST: "http://${DS1_HOST:-localhost}:8080"
+      WOODPECKER_DATABASE_DRIVER: postgres
+      WOODPECKER_DATABASE_DATASOURCE: "postgres://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform?sslmode=disable"
+    ports:
+      - "8080:8000"
+    depends_on:
+      gitea:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - platform
+
+  woodpecker-agent:
+    image: woodpeckerci/woodpecker-agent:v3
+    environment:
+      WOODPECKER_SERVER: woodpecker-server:9000
+      WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-changeme}
+      WOODPECKER_BACKEND: docker
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - woodpecker-server
+    restart: unless-stopped
+    networks:
+      - platform
+
+  coder:
+    build: ./agents/coder
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      GITEA_URL: http://gitea:3000
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
+      GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
+    depends_on:
+      gitea-init:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - platform
+
   orchestrator:
     build: ./orchestrator
     volumes:
@@ -47,11 +157,17 @@ services:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      CODER_URL: http://coder:8001
+      GITEA_URL: http://gitea:3000
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
+      GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
       DB_URL: postgresql://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform
     depends_on:
       ollama:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      coder:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
@@ -79,3 +195,4 @@ networks:
 volumes:
   db_data:
   ollama_data:
+  gitea_data:

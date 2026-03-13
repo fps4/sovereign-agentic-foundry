@@ -63,6 +63,10 @@ class AppInfo(BaseModel):
     url: str
 
 
+class MeResponse(BaseModel):
+    registered: bool
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _gitea_auth() -> tuple[str, str]:
@@ -124,7 +128,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     user = await db.get_user(int(req.user_id))
     if not user or not user["verified"]:
         return ChatResponse(
-            reply="You need to register first. Send /register to get started."
+            reply="You'll need an account first. Send /register to get started."
         )
     try:
         result = await graph.ainvoke(
@@ -167,6 +171,12 @@ async def list_apps(telegram_id: int) -> list[AppInfo]:
         )
         for r in resp.json()
     ]
+
+
+@app.get("/me", response_model=MeResponse)
+async def me(telegram_id: int) -> MeResponse:
+    user = await db.get_user(telegram_id)
+    return MeResponse(registered=bool(user and user["verified"]))
 
 
 @app.get("/health")

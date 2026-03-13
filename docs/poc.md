@@ -22,6 +22,8 @@ Conversation loop only: Telegram bot → FastAPI orchestrator → Ollama → rep
 
 `agents/coder/`: receives a task spec extracted by the orchestrator's intent classifier, uses the LLM to scaffold a repo (files + Dockerfile + `.woodpecker.yml`), commits to Gitea via API, and returns the repo URL. Woodpecker CI triggers a pipeline on every push. New services: `gitea`, `woodpecker-server`, `woodpecker-agent`, `coder`; per-user Gitea orgs with Telegram code-based registration enforce tenancy.
 
+## Deferred to a later stage with multi-node Docker or K8S
+
 **Phase 4 — Infra + review agents**
 
 Add OpenTofu for infra provisioning and Semgrep/Trivy for the review gate. Nothing gets committed unless the review agent approves. Stream status updates back during long-running operations.

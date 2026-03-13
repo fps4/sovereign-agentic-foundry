@@ -39,14 +39,12 @@ SYSTEM_PROMPT = _BASE_PROMPT + (
 _CLASSIFY_PROMPT = """\
 You are an intent classifier for a sovereign agentic platform.
 
-Classify the user message as "build" (user wants to CREATE a new software project) \
-or "chat" (question, advice, general conversation).
-
-Respond with ONLY valid JSON — no markdown, no explanation.
+Classify the user message and respond with ONLY valid JSON — no markdown, no explanation.
 
 Schema:
 {
   "intent": "build" or "chat",
+  "app_type": "form" | "dashboard" | "workflow" | "connector" | "assistant" | "unknown",
   "task_spec": {
     "name": "kebab-case-repo-name",
     "description": "one-sentence description",
@@ -55,14 +53,35 @@ Schema:
   }
 }
 
-For "chat", use: {"intent": "chat", "task_spec": {}}
+App type definitions:
+- "form": collect or manage structured data — forms, registries, records
+- "dashboard": display or visualise data, read-only interface
+- "workflow": multi-step processes with stages, assignments, notifications
+- "connector": headless backend linking two systems, no UI
+- "assistant": RAG chat or Q&A over documents
+- "unknown": cannot determine the type from the description
+
+For "chat", use: {"intent": "chat", "app_type": "", "task_spec": {}}
 
 Rules:
 - Only set intent="build" when the user clearly wants to CREATE something new
 - name must be kebab-case
 - stack defaults to python-fastapi if unclear
 - All three fields (name, description, stack) are required for a valid build intent
+- If intent="build" but the app type is ambiguous, set app_type="unknown"
 """
+
+_APP_TYPE_MENU = (
+    "I'd love to help! To point you in the right direction, "
+    "which of these best describes what you have in mind?\n\n"
+    "• *Form* — capture or manage information (e.g. registrations, requests, records)\n"
+    "• *Dashboard* — see data at a glance (e.g. sales, performance, live metrics)\n"
+    "• *Workflow* — move things through steps or approvals (e.g. onboarding, reviews)\n"
+    "• *Integration* — connect two services automatically, no screen needed\n"
+    "• *Assistant* — get answers from your documents or knowledge base\n\n"
+    "Just tell me again what you'd like, mentioning the type — for example:\n"
+    "_I need a Form to collect patient intake information_"
+)
 
 
 class State(TypedDict):
@@ -84,16 +103,24 @@ def classify(state: State) -> State:
     try:
         data = json.loads(result.content)
         intent = data.get("intent", "chat")
+        app_type = data.get("app_type", "")
         task_spec = data.get("task_spec", {})
-        if intent == "build" and not all(
-            k in task_spec for k in ("name", "description", "stack")
-        ):
-            # Incomplete spec — fall back to chat so the user is asked for details
-            intent = "chat"
-            task_spec = {}
+        if intent == "build":
+            if not all(k in task_spec for k in ("name", "description", "stack")):
+                # Incomplete spec — fall back to chat so the user is asked for details
+                intent = "chat"
+                task_spec = {}
+            elif app_type == "unknown":
+                intent = "clarify_type"
+            else:
+                task_spec["app_type"] = app_type
     except (json.JSONDecodeError, AttributeError, TypeError):
         pass
     return {**state, "intent": intent, "task_spec": task_spec}
+
+
+def ask_type(state: State) -> State:
+    return {**state, "reply": _APP_TYPE_MENU}
 
 
 def respond(state: State) -> State:
@@ -111,9 +138,9 @@ async def invoke_coder(state: State) -> State:
         resp.raise_for_status()
         data = resp.json()
     reply = (
-        f"Project scaffolded and committed to Gitea.\n\n"
-        f"Repo: {data['repo_url']}\n\n"
-        f"Woodpecker CI will trigger a pipeline on the next push to main."
+        f"Your app is ready!\n\n"
+        f"You can find it here: {data['repo_url']}\n\n"
+        f"It will be built and deployed automatically when you push changes."
     )
     return {**state, "reply": reply}
 
@@ -126,9 +153,13 @@ workflow = StateGraph(State)
 workflow.add_node("classify", classify)
 workflow.add_node("respond", respond)
 workflow.add_node("invoke_coder", invoke_coder)
+workflow.add_node("ask_type", ask_type)
 workflow.set_entry_point("classify")
-workflow.add_conditional_edges("classify", _route, {"chat": "respond", "build": "invoke_coder"})
+workflow.add_conditional_edges(
+    "classify", _route, {"chat": "respond", "build": "invoke_coder", "clarify_type": "ask_type"}
+)
 workflow.add_edge("respond", END)
 workflow.add_edge("invoke_coder", END)
+workflow.add_edge("ask_type", END)
 
 graph = workflow.compile()

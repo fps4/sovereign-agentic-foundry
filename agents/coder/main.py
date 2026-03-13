@@ -25,7 +25,7 @@ class BuildResponse(BaseModel):
 async def build(req: BuildRequest) -> BuildResponse:
     try:
         files = await scaffold_project(
-            req.name, req.description, req.stack, req.requirements
+            req.name, req.description, req.stack, req.requirements, req.app_type
         )
         repo_url = await create_repo_with_files(
             req.name, req.description, files, req.org

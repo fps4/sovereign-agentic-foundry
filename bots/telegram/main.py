@@ -19,16 +19,65 @@ ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8000")
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+_HELP_REGISTERED = (
+    "Here's what I can do for you:\n\n"
+    "*Build an app*\n"
+    "Just tell me what you need in plain language, for example:\n"
+    "_I need a form to collect patient intake information_\n"
+    "_Build me a sales overview screen_\n\n"
+    "I can build:\n"
+    "• *Forms* — capture and manage information\n"
+    "• *Dashboards* — display data at a glance\n"
+    "• *Workflows* — guide tasks through steps or approvals\n"
+    "• *Integrations* — connect two services behind the scenes\n"
+    "• *Assistants* — answer questions from your documents\n\n"
+    "*Commands*\n"
+    "/apps — see your apps\n"
+    "/help — show this message"
+)
+
+_HELP_UNREGISTERED = (
+    "Hi! I turn your ideas into working apps — no coding needed.\n\n"
+    "Just describe what you want and I'll take care of the rest: "
+    "your app will be ready and running in minutes.\n\n"
+    "*To get started:*\n"
+    "1. Send /register to create your account\n"
+    "2. Enter the 6-digit code you'll receive here\n"
+    "3. Describe the app you have in mind\n\n"
+    "/register — create your account\n"
+    "/help — show this message"
+)
+
+
+async def _is_registered(telegram_id: int) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{ORCHESTRATOR_URL}/me", params={"telegram_id": telegram_id}
+            )
+            resp.raise_for_status()
+            return resp.json().get("registered", False)
+    except httpx.HTTPError:
+        return False
+
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    await message.answer(
-        "Hello! I'm your sovereign AI platform assistant.\n\n"
-        "Commands:\n"
-        "/register — create your account\n"
-        "/apps — list your applications\n\n"
-        "Once registered, tell me what you'd like to build."
-    )
+    registered = await _is_registered(message.from_user.id)
+    if registered:
+        await message.answer(
+            f"Welcome back, {message.from_user.first_name}!\n\n{_HELP_REGISTERED}",
+            parse_mode="Markdown",
+        )
+    else:
+        await message.answer(_HELP_UNREGISTERED, parse_mode="Markdown")
+
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    registered = await _is_registered(message.from_user.id)
+    text = _HELP_REGISTERED if registered else _HELP_UNREGISTERED
+    await message.answer(text, parse_mode="Markdown")
 
 
 @dp.message(Command("register"))
@@ -47,16 +96,18 @@ async def cmd_register(message: Message) -> None:
             data = resp.json()
     except httpx.HTTPError as e:
         log.error("Register request failed: %s", e)
-        await message.answer("Could not reach the platform. Please try again.")
+        await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
 
     if data["message"] == "already_registered":
-        await message.answer("You're already registered and verified.")
+        await message.answer(
+            "You're already set up! Send /help to see what I can build for you."
+        )
         return
 
     await message.answer(
-        f"Your verification code is: *{data['code']}*\n\n"
-        "Reply with this code to complete registration.",
+        f"Your confirmation code is: *{data['code']}*\n\n"
+        "Reply with this code to finish setting up your account.",
         parse_mode="Markdown",
     )
 
@@ -76,20 +127,25 @@ async def handle_verification_code(message: Message) -> None:
             data = resp.json()
     except httpx.HTTPError as e:
         log.error("Verify request failed: %s", e)
-        await message.answer("Could not reach the platform. Please try again.")
+        await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
 
     if data["success"]:
         await message.answer(
-            "You're verified! Your private workspace has been created in Gitea.\n\n"
-            "Tell me what you'd like to build."
+            f"You're all set, {message.from_user.first_name}! Your personal space is ready.\n\n"
+            + _HELP_REGISTERED,
+            parse_mode="Markdown",
         )
     elif data["message"] == "wrong_code":
-        await message.answer("That code is incorrect. Send /register to get a new one.")
+        await message.answer(
+            "That code doesn't match. Send /register to receive a new one."
+        )
     elif data["message"] == "not_registered":
-        await message.answer("Please send /register first.")
+        await message.answer("Please send /register first to create your account.")
     else:
-        await message.answer("Already verified. You're good to go!")
+        await message.answer(
+            "You're already set up! Send /help to see what I can build for you."
+        )
 
 
 @dp.message(Command("apps"))
@@ -103,21 +159,23 @@ async def cmd_apps(message: Message) -> None:
             )
             if resp.status_code == 403:
                 await message.answer(
-                    "You need to register first. Send /register to get started."
+                    "You'll need an account first. Send /register to get started."
                 )
                 return
             resp.raise_for_status()
             apps = resp.json()
     except httpx.HTTPError as e:
         log.error("Failed to fetch apps: %s", e)
-        await message.answer("Could not reach the platform. Please try again.")
+        await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
 
     if not apps:
-        await message.answer("No applications yet. Tell me what you'd like to build!")
+        await message.answer(
+            "You haven't built anything yet. Tell me what you'd like to create!"
+        )
         return
 
-    lines = ["*Your Applications*\n"]
+    lines = ["*Your Apps*\n"]
     for app in apps:
         lines.append(f"• [{app['name']}]({app['url']}) — {app['description']}")
     await message.answer("\n".join(lines), parse_mode="Markdown")
@@ -141,7 +199,7 @@ async def handle_message(message: Message) -> None:
     except httpx.HTTPError as e:
         log.error("Orchestrator request failed: %s", e)
         await message.answer(
-            "Sorry, I'm having trouble connecting. Please try again."
+            "Something went wrong on our end. Please try again in a moment."
         )
         return
 

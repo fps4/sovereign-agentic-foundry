@@ -56,9 +56,12 @@ Adjust the test step image and commands to match the stack.
 
 
 async def scaffold_project(
-    name: str, description: str, stack: str, requirements: list[str]
+    name: str, description: str, stack: str, requirements: list[str], app_type: str = ""
 ) -> list[dict]:
     """Return a list of {path, content} dicts for the scaffolded project."""
+    if app_type == "form":
+        from templates.form import scaffold_form
+        return await scaffold_form(name, description, requirements)
     llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, format="json")
     user_prompt = (
         f"name: {name}\n"

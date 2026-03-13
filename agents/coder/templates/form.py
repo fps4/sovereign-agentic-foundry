@@ -17,6 +17,7 @@ from langchain_ollama import ChatOllama
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+APP_DOMAIN = os.getenv("APP_DOMAIN", "localhost")
 
 _FIELDS_PROMPT = """\
 Extract the form fields from the description below. Output ONLY valid JSON, nothing else.
@@ -280,9 +281,9 @@ def _woodpecker(name: str) -> str:
         "    commands:\n"
         f"      - docker rm -f {name} || true\n"
         f"      - docker run -d --name {name} --restart unless-stopped"
-        f" --network platform"
+        f" --network platform_platform"
         f' --label "traefik.enable=true"'
-        f' --label "traefik.http.routers.{name}.rule=Host(\\`{name}.${{APP_DOMAIN:-localhost}}\\`)"'
+        f' --label "traefik.http.routers.{name}.rule=Host(\\`{name}.{APP_DOMAIN}\\`)"'
         f' --label "traefik.http.routers.{name}.entrypoints=web"'
         f' --label "traefik.http.services.{name}.loadbalancer.server.port=8000"'
         f' --label "platform.owner=${{CI_REPO_OWNER}}"'

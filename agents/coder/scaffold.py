@@ -15,6 +15,7 @@ from langchain_ollama import ChatOllama
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+APP_DOMAIN = os.getenv("APP_DOMAIN", "localhost")
 
 _SCAFFOLD_PROMPT = """\
 You are a code scaffolding agent for a sovereign agentic platform.
@@ -53,7 +54,7 @@ steps:
     image: docker:cli
     commands:
       - docker rm -f ${CI_REPO_NAME} || true
-      - docker run -d --name ${CI_REPO_NAME} --restart unless-stopped --network platform --label "traefik.enable=true" --label "traefik.http.routers.${CI_REPO_NAME}.rule=Host(`${CI_REPO_NAME}.${APP_DOMAIN}`)" --label "traefik.http.routers.${CI_REPO_NAME}.entrypoints=web" --label "traefik.http.services.${CI_REPO_NAME}.loadbalancer.server.port=8000" --label "platform.owner=${CI_REPO_OWNER}" ${CI_REPO_NAME}:latest
+      - docker run -d --name ${CI_REPO_NAME} --restart unless-stopped --network platform_platform --label "traefik.enable=true" --label "traefik.http.routers.${CI_REPO_NAME}.rule=Host(`${CI_REPO_NAME}.%%APP_DOMAIN%%`)" --label "traefik.http.routers.${CI_REPO_NAME}.entrypoints=web" --label "traefik.http.services.${CI_REPO_NAME}.loadbalancer.server.port=8000" --label "platform.owner=${CI_REPO_OWNER}" ${CI_REPO_NAME}:latest
     when:
       branch: main
 
@@ -82,11 +83,19 @@ async def scaffold_project(
         data = json.loads(result.content)
         files = data.get("files", [])
         if files and all("path" in f and "content" in f for f in files):
-            return files
+            return _inject_domain(files)
     except (json.JSONDecodeError, AttributeError, TypeError):
         pass
 
     return _minimal_scaffold(name, description, stack)
+
+
+def _inject_domain(files: list[dict]) -> list[dict]:
+    """Replace %%APP_DOMAIN%% placeholder with the actual APP_DOMAIN value."""
+    return [
+        {**f, "content": f["content"].replace("%%APP_DOMAIN%%", APP_DOMAIN)}
+        for f in files
+    ]
 
 
 def _woodpecker_yml(name: str, image: str, test_cmd: str) -> str:
@@ -107,9 +116,9 @@ def _woodpecker_yml(name: str, image: str, test_cmd: str) -> str:
         "    commands:\n"
         f"      - docker rm -f {name} || true\n"
         f"      - docker run -d --name {name} --restart unless-stopped"
-        f" --network platform"
+        f" --network platform_platform"
         f' --label "traefik.enable=true"'
-        f' --label "traefik.http.routers.{name}.rule=Host(\\`{name}.${{APP_DOMAIN:-localhost}}\\`)"'
+        f' --label "traefik.http.routers.{name}.rule=Host(\\`{name}.{APP_DOMAIN}\\`)"'
         f' --label "traefik.http.routers.{name}.entrypoints=web"'
         f' --label "traefik.http.services.{name}.loadbalancer.server.port=8000"'
         f' --label "platform.owner=${{CI_REPO_OWNER}}"'

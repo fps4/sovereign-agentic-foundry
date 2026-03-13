@@ -22,7 +22,7 @@ _FIELDS_PROMPT = """\
 Extract the form fields from the description below. Output ONLY valid JSON, nothing else.
 
 Schema:
-{"fields": [{"name": "snake_case", "type": "str|int|float|bool", "required": true|false, "label": "Human Label"}]}
+{{"fields": [{{"name": "snake_case", "type": "str|int|float|bool", "required": true|false, "label": "Human Label"}}]}}
 
 Rules:
 - Always return at least 3 meaningful fields
@@ -270,10 +270,23 @@ def _woodpecker(name: str) -> str:
         "      - pip install -r requirements.txt\n"
         "      - python -m pytest -v || echo 'no tests'\n"
         "  - name: docker-build\n"
-        "    image: plugins/docker\n"
-        "    settings:\n"
-        f"      repo: registry.local/{name}\n"
-        "      tags: latest,${CI_COMMIT_SHA:0:8}\n"
+        "    image: docker:cli\n"
+        "    commands:\n"
+        f"      - docker build -t {name}:latest .\n"
+        "    when:\n"
+        "      branch: main\n"
+        "  - name: deploy\n"
+        "    image: docker:cli\n"
+        "    commands:\n"
+        f"      - docker rm -f {name} || true\n"
+        f"      - docker run -d --name {name} --restart unless-stopped"
+        f" --network platform"
+        f' --label "traefik.enable=true"'
+        f' --label "traefik.http.routers.{name}.rule=Host(\\`{name}.${{APP_DOMAIN:-localhost}}\\`)"'
+        f' --label "traefik.http.routers.{name}.entrypoints=web"'
+        f' --label "traefik.http.services.{name}.loadbalancer.server.port=8000"'
+        f' --label "platform.owner=${{CI_REPO_OWNER}}"'
+        f" {name}:latest\n"
         "    when:\n"
         "      branch: main\n"
     )

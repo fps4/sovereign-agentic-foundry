@@ -103,8 +103,10 @@ services:
       WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-changeme}
       WOODPECKER_HOST: "http://${DS1_HOST:-localhost}:8080"
       WOODPECKER_DATABASE_DRIVER: postgres
-      WOODPECKER_DATABASE_DATASOURCE: "postgres://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform?sslmode=disable"
-      WOODPECKER_ENVIRONMENT: "DS1_HOST=${DS1_HOST:-localhost}"
+      WOODPECKER_DATABASE_DATASOURCE: "postgres://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/woodpecker?sslmode=disable"
+      WOODPECKER_ENVIRONMENT: "DS1_HOST,APP_DOMAIN"
+      DS1_HOST: ${DS1_HOST:-localhost}
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
     ports:
       - "8080:8000"
     depends_on:
@@ -139,7 +141,7 @@ services:
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
       GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
-      APP_HOST: ${DS1_HOST:-localhost}
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
     depends_on:
       gitea-init:
         condition: service_completed_successfully
@@ -165,6 +167,8 @@ services:
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
       GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
       DB_URL: postgresql://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
     depends_on:
       ollama:
         condition: service_healthy
@@ -177,6 +181,24 @@ services:
       - "traefik.http.routers.orchestrator.rule=PathPrefix(`/`)"
       - "traefik.http.routers.orchestrator.entrypoints=web"
       - "traefik.http.services.orchestrator.loadbalancer.server.port=8000"
+    networks:
+      - platform
+
+  monitor:
+    build: ./agents/monitor
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      MONITOR_POLL_INTERVAL: ${MONITOR_POLL_INTERVAL:-60}
+      MONITOR_COOLDOWN: ${MONITOR_COOLDOWN:-600}
+      MONITOR_LOG_LINES: ${MONITOR_LOG_LINES:-50}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - platform
 

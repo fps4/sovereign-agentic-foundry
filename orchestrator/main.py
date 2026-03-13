@@ -8,12 +8,16 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import asyncio
+
 import db
-from workflow import graph
+from workflow import graph, run_build
 
 GITEA_URL = os.getenv("GITEA_URL", "http://gitea:3000")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "platform")
 GITEA_ADMIN_PASS = os.getenv("GITEA_ADMIN_PASS", "")
+APP_DOMAIN = os.getenv("APP_DOMAIN", "localhost")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
 
 @asynccontextmanager
@@ -151,6 +155,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
             reply="You'll need an account first. Send /register to get started."
         )
     try:
+        org = user["gitea_org"] or ""
         result = await graph.ainvoke(
             {
                 "user_id": req.user_id,
@@ -158,9 +163,18 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 "reply": "",
                 "intent": "",
                 "task_spec": {},
-                "org": user["gitea_org"] or "",
+                "org": org,
             }
         )
+        if result["intent"] == "build" and result.get("task_spec"):
+            asyncio.create_task(
+                run_build(
+                    spec=result["task_spec"],
+                    org=org,
+                    telegram_id=int(req.user_id),
+                    bot_token=TELEGRAM_BOT_TOKEN,
+                )
+            )
         return ChatResponse(reply=result["reply"])
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -187,7 +201,7 @@ async def list_apps(telegram_id: int) -> list[AppInfo]:
         AppInfo(
             name=r["name"],
             description=r.get("description") or "No description",
-            url=r["html_url"],
+            url=f"http://{r['name']}.{APP_DOMAIN}",
         )
         for r in resp.json()
     ]

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from gitea import create_repo_with_files
 from scaffold import scaffold_project
 
-APP_HOST = os.getenv("APP_HOST", "localhost")
+APP_DOMAIN = os.getenv("APP_DOMAIN", "localhost")
 
 app = FastAPI(title="Coder Agent")
 
@@ -36,7 +36,7 @@ async def build(req: BuildRequest) -> BuildResponse:
         repo_url = await create_repo_with_files(
             req.name, req.description, files, req.org
         )
-        app_url = f"http://{req.name}.{APP_HOST}"
+        app_url = f"http://{req.name}.{APP_DOMAIN}"
         return BuildResponse(repo_url=repo_url, app_url=app_url)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

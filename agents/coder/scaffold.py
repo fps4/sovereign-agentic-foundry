@@ -53,7 +53,7 @@ steps:
     image: docker:cli
     commands:
       - docker rm -f ${CI_REPO_NAME} || true
-      - docker run -d --name ${CI_REPO_NAME} --restart unless-stopped --network platform --label "traefik.enable=true" --label "traefik.http.routers.${CI_REPO_NAME}.rule=Host(`${CI_REPO_NAME}.${DS1_HOST}`)" --label "traefik.http.routers.${CI_REPO_NAME}.entrypoints=web" --label "traefik.http.services.${CI_REPO_NAME}.loadbalancer.server.port=8000" ${CI_REPO_NAME}:latest
+      - docker run -d --name ${CI_REPO_NAME} --restart unless-stopped --network platform --label "traefik.enable=true" --label "traefik.http.routers.${CI_REPO_NAME}.rule=Host(`${CI_REPO_NAME}.${APP_DOMAIN}`)" --label "traefik.http.routers.${CI_REPO_NAME}.entrypoints=web" --label "traefik.http.services.${CI_REPO_NAME}.loadbalancer.server.port=8000" --label "platform.owner=${CI_REPO_OWNER}" ${CI_REPO_NAME}:latest
     when:
       branch: main
 
@@ -109,9 +109,10 @@ def _woodpecker_yml(name: str, image: str, test_cmd: str) -> str:
         f"      - docker run -d --name {name} --restart unless-stopped"
         f" --network platform"
         f' --label "traefik.enable=true"'
-        f' --label "traefik.http.routers.{name}.rule=Host(\\`{name}.${{DS1_HOST:-localhost}}\\`)"'
+        f' --label "traefik.http.routers.{name}.rule=Host(\\`{name}.${{APP_DOMAIN:-localhost}}\\`)"'
         f' --label "traefik.http.routers.{name}.entrypoints=web"'
         f' --label "traefik.http.services.{name}.loadbalancer.server.port=8000"'
+        f' --label "platform.owner=${{CI_REPO_OWNER}}"'
         f" {name}:latest\n"
         "    when:\n"
         "      branch: main\n"

@@ -107,7 +107,6 @@ def classify(state: State) -> State:
         task_spec = data.get("task_spec", {})
         if intent == "build":
             if not all(k in task_spec for k in ("name", "description", "stack")):
-                # Incomplete spec — fall back to chat so the user is asked for details
                 intent = "chat"
                 task_spec = {}
             elif app_type == "unknown":
@@ -131,19 +130,23 @@ def respond(state: State) -> State:
     return {**state, "reply": result.content}
 
 
-async def invoke_coder(state: State) -> State:
-    spec = {**state["task_spec"], "org": state.get("org", "")}
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        resp = await client.post(f"{CODER_URL}/build", json=spec)
-        resp.raise_for_status()
-        data = resp.json()
-    reply = (
-        f"Your app is ready!\n\n"
-        f"Open it here: {data['app_url']}\n\n"
-        f"Your code lives here: {data['repo_url']}\n\n"
-        f"It will update automatically whenever you make changes."
-    )
-    return {**state, "reply": reply}
+def confirm_build(state: State) -> State:
+    """Return an immediate acknowledgement — the actual build runs in the background."""
+    spec = state["task_spec"]
+    name = spec.get("name", "your app")
+    description = spec.get("description", "")
+    app_type = spec.get("app_type", "")
+    requirements = spec.get("requirements", [])
+
+    lines = [f"Got it! Here's what I'm going to build:\n"]
+    lines.append(f"*{name}* — {description}")
+    if app_type:
+        lines.append(f"Type: {app_type}")
+    if requirements:
+        lines.append(f"Features: {', '.join(requirements)}")
+    lines.append("\nScaffolding the project and pushing to your repo now. I'll message you when it's ready.")
+
+    return {**state, "reply": "\n".join(lines)}
 
 
 def _route(state: State) -> str:
@@ -153,14 +156,47 @@ def _route(state: State) -> str:
 workflow = StateGraph(State)
 workflow.add_node("classify", classify)
 workflow.add_node("respond", respond)
-workflow.add_node("invoke_coder", invoke_coder)
+workflow.add_node("confirm_build", confirm_build)
 workflow.add_node("ask_type", ask_type)
 workflow.set_entry_point("classify")
 workflow.add_conditional_edges(
-    "classify", _route, {"chat": "respond", "build": "invoke_coder", "clarify_type": "ask_type"}
+    "classify", _route, {"chat": "respond", "build": "confirm_build", "clarify_type": "ask_type"}
 )
 workflow.add_edge("respond", END)
-workflow.add_edge("invoke_coder", END)
+workflow.add_edge("confirm_build", END)
 workflow.add_edge("ask_type", END)
 
 graph = workflow.compile()
+
+
+# ── Background build ──────────────────────────────────────────────────────────
+
+async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str) -> None:
+    """Call the coder agent and push the result to Telegram. Runs as a background task."""
+    name = spec.get("name", "your app")
+
+    async def _telegram(text: str) -> None:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": telegram_id, "text": text, "parse_mode": "Markdown"},
+            )
+
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(f"{CODER_URL}/build", json={**spec, "org": org})
+            resp.raise_for_status()
+            data = resp.json()
+
+        await _telegram(
+            f"*{name}* is ready!\n\n"
+            f"Open it: {data['app_url']}\n"
+            f"Code: {data['repo_url']}\n\n"
+            f"It updates automatically whenever you push to main."
+        )
+    except Exception as exc:
+        await _telegram(
+            f"Build failed for *{name}*.\n\n"
+            f"Error: {exc}\n\n"
+            f"Use /fix to log the issue or try /build again."
+        )

@@ -20,6 +20,7 @@ cp .env.example .env
 Edit `.env` and set:
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
 - `DS1_HOST` — hostname or IP of your Docker host
+- `APP_DOMAIN` — public domain for live app URLs (e.g. `apps.yourdomain.com`); route `*.APP_DOMAIN → ds1:80` via Cloudflare Tunnel or a wildcard DNS record
 - `GITEA_ADMIN_PASS` — password for the Gitea admin account (choose any)
 
 **2. Pull the Ollama model**
@@ -79,7 +80,7 @@ Open Telegram, find your bot, and send `/start`, then `/register`. Reply with th
 
 > *build me a REST API for managing users in Python*
 
-The bot scaffolds the project, pushes it to your private Gitea org, and replies with the repo URL. Woodpecker CI triggers a pipeline on the next push to `main`.
+The bot scaffolds the project, pushes it to your private Gitea org, and replies with the live app URL (`http://{app-name}.APP_DOMAIN`). Woodpecker CI builds and deploys the container, attaching Traefik labels so it becomes publicly accessible immediately.
 
 ---
 
@@ -87,14 +88,15 @@ The bot scaffolds the project, pushes it to your private Gitea org, and replies 
 
 | Service | Port | Description |
 |---|---|---|
-| `traefik` | 80 | Reverse proxy, routes external HTTP to the orchestrator |
+| `traefik` | 80 | Reverse proxy — routes `APP_DOMAIN` traffic to the orchestrator and all deployed apps |
 | `postgres` | — | Database for workflow state |
 | `ollama` | — | Local LLM inference |
 | `gitea` | 3000 | Self-hosted Git service |
 | `gitea-init` | — | One-shot init container: creates the Gitea admin user |
 | `woodpecker-server` | 8080 | CI server and web UI |
-| `woodpecker-agent` | — | CI runner, executes pipelines via Docker |
+| `woodpecker-agent` | — | CI runner, executes pipelines via Docker; sets Traefik labels on deployed app containers |
 | `coder` | — | Coder agent: LLM scaffold → Gitea commit |
+| `monitor` | — | Log monitor agent: polls app containers, summarises errors, notifies owner via Telegram |
 | `orchestrator` | — | FastAPI + LangGraph, intent classification + chat |
 | `telegram-bot` | — | Telegram polling bot |
 
@@ -119,7 +121,8 @@ DOCKER_HOST=ssh://ds1 docker compose down
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Bot token from @BotFather |
-| `DS1_HOST` | Yes | `localhost` | Hostname/IP of the Docker host |
+| `DS1_HOST` | Yes | `localhost` | Hostname/IP of the Docker host (used for Gitea/Woodpecker internal URLs) |
+| `APP_DOMAIN` | Yes | `localhost` | Public domain for live app URLs — apps are served at `{app-name}.APP_DOMAIN`; route `*.APP_DOMAIN → ds1:80` via Cloudflare Tunnel or wildcard DNS |
 | `POSTGRES_PASSWORD` | No | `changeme` | Postgres password |
 | `OLLAMA_MODEL` | No | `llama3.1:8b` | Model used by orchestrator and coder |
 | `GITEA_ADMIN_USER` | No | `platform` | Gitea admin username |
@@ -128,6 +131,9 @@ DOCKER_HOST=ssh://ds1 docker compose down
 | `WOODPECKER_GITEA_CLIENT` | Step 4 | — | Gitea OAuth2 client ID |
 | `WOODPECKER_GITEA_SECRET` | Step 4 | — | Gitea OAuth2 client secret |
 | `WOODPECKER_AGENT_SECRET` | No | `changeme` | Shared secret between Woodpecker server and agent |
+| `MONITOR_POLL_INTERVAL` | No | `60` | Seconds between log checks |
+| `MONITOR_COOLDOWN` | No | `600` | Seconds before re-alerting on the same app |
+| `MONITOR_LOG_LINES` | No | `50` | Log lines sampled per check |
 
 ## Build phases
 

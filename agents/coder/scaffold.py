@@ -44,10 +44,16 @@ steps:
       - pip install -r requirements.txt
       - python -m pytest -v || echo "no tests"
   - name: docker-build
-    image: plugins/docker
-    settings:
-      repo: registry.local/${CI_REPO_NAME}
-      tags: latest,${CI_COMMIT_SHA:0:8}
+    image: docker:cli
+    commands:
+      - docker build -t ${CI_REPO_NAME}:latest .
+    when:
+      branch: main
+  - name: deploy
+    image: docker:cli
+    commands:
+      - docker rm -f ${CI_REPO_NAME} || true
+      - docker run -d --name ${CI_REPO_NAME} --restart unless-stopped --network platform --label "traefik.enable=true" --label "traefik.http.routers.${CI_REPO_NAME}.rule=Host(`${CI_REPO_NAME}.${DS1_HOST}`)" --label "traefik.http.routers.${CI_REPO_NAME}.entrypoints=web" --label "traefik.http.services.${CI_REPO_NAME}.loadbalancer.server.port=8000" ${CI_REPO_NAME}:latest
     when:
       branch: main
 
@@ -91,10 +97,22 @@ def _woodpecker_yml(name: str, image: str, test_cmd: str) -> str:
         "    commands:\n"
         f"      - {test_cmd}\n"
         "  - name: docker-build\n"
-        "    image: plugins/docker\n"
-        "    settings:\n"
-        f"      repo: registry.local/{name}\n"
-        "      tags: latest,${{CI_COMMIT_SHA:0:8}}\n"
+        "    image: docker:cli\n"
+        "    commands:\n"
+        f"      - docker build -t {name}:latest .\n"
+        "    when:\n"
+        "      branch: main\n"
+        "  - name: deploy\n"
+        "    image: docker:cli\n"
+        "    commands:\n"
+        f"      - docker rm -f {name} || true\n"
+        f"      - docker run -d --name {name} --restart unless-stopped"
+        f" --network platform"
+        f' --label "traefik.enable=true"'
+        f' --label "traefik.http.routers.{name}.rule=Host(\\`{name}.${{DS1_HOST:-localhost}}\\`)"'
+        f' --label "traefik.http.routers.{name}.entrypoints=web"'
+        f' --label "traefik.http.services.{name}.loadbalancer.server.port=8000"'
+        f" {name}:latest\n"
         "    when:\n"
         "      branch: main\n"
     )

@@ -139,8 +139,9 @@ async def invoke_coder(state: State) -> State:
         data = resp.json()
     reply = (
         f"Your app is ready!\n\n"
-        f"You can find it here: {data['repo_url']}\n\n"
-        f"It will be built and deployed automatically when you push changes."
+        f"Open it here: {data['app_url']}\n\n"
+        f"Your code lives here: {data['repo_url']}\n\n"
+        f"It will update automatically whenever you make changes."
     )
     return {**state, "reply": reply}
 

@@ -43,6 +43,11 @@ class FixStates(StatesGroup):
     waiting_issue_description = State()
 
 
+class DeleteStates(StatesGroup):
+    waiting_app_selection = State()
+    waiting_confirmation = State()
+
+
 # ── Copy ──────────────────────────────────────────────────────────────────────
 
 _HELP_REGISTERED = (
@@ -58,6 +63,7 @@ _HELP_REGISTERED = (
     "*Commands*\n"
     "/build — start building a new app\n"
     "/fix — report an issue in one of your apps\n"
+    "/delete — permanently delete an app\n"
     "/apps — see your apps\n"
     "/help — show this message"
 )
@@ -190,6 +196,33 @@ async def cmd_fix(message: Message, state: FSMContext) -> None:
     await state.update_data(apps=apps)
 
     lines = ["Which app has an issue? Reply with the number.\n"]
+    for i, app in enumerate(apps, 1):
+        lines.append(f"{i}. *{app['name']}* — {app['description']}")
+    await message.answer("\n".join(lines), parse_mode="Markdown")
+
+
+@dp.message(Command("delete"))
+async def cmd_delete(message: Message, state: FSMContext) -> None:
+    registered = await _is_registered(message.from_user.id)
+    if not registered:
+        await message.answer("Send /register to create your account and get started.")
+        return
+
+    await bot.send_chat_action(message.chat.id, "typing")
+    apps = await _fetch_apps(message.from_user.id)
+    if apps is None:
+        await message.answer("Something went wrong on our end. Please try again in a moment.")
+        return
+    if not apps:
+        await message.answer(
+            "You haven't built any apps yet. Use /build to create your first one!"
+        )
+        return
+
+    await state.set_state(DeleteStates.waiting_app_selection)
+    await state.update_data(apps=apps)
+
+    lines = ["Which app do you want to delete? Reply with the number.\n"]
     for i, app in enumerate(apps, 1):
         lines.append(f"{i}. *{app['name']}* — {app['description']}")
     await message.answer("\n".join(lines), parse_mode="Markdown")
@@ -355,6 +388,62 @@ async def handle_fix_description(message: Message, state: FSMContext) -> None:
         f"Issue logged! It's been added to the queue and will be picked up shortly.\n\n"
         f"Track it here: {result['issue_url']}",
     )
+
+
+# ── Delete flow ───────────────────────────────────────────────────────────────
+
+@dp.message(DeleteStates.waiting_app_selection)
+async def handle_delete_app_selection(message: Message, state: FSMContext) -> None:
+    if not message.text:
+        return
+    data = await state.get_data()
+    apps = data.get("apps", [])
+
+    text = message.text.strip()
+    if not text.isdigit() or not (1 <= int(text) <= len(apps)):
+        await message.answer(f"Please reply with a number between 1 and {len(apps)}.")
+        return
+
+    selected = apps[int(text) - 1]
+    await state.update_data(selected_app=selected["name"])
+    await state.set_state(DeleteStates.waiting_confirmation)
+    await message.answer(
+        f"Are you sure you want to permanently delete *{selected['name']}*? "
+        "This cannot be undone.\n\nReply *yes* to confirm or anything else to cancel.",
+        parse_mode="Markdown",
+    )
+
+
+@dp.message(DeleteStates.waiting_confirmation)
+async def handle_delete_confirmation(message: Message, state: FSMContext) -> None:
+    if not message.text:
+        return
+    data = await state.get_data()
+    repo_name = data.get("selected_app", "")
+
+    if message.text.strip().lower() != "yes":
+        await state.clear()
+        await message.answer("Deletion cancelled.")
+        return
+
+    await state.clear()
+    await bot.send_chat_action(message.chat.id, "typing")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{ORCHESTRATOR_URL}/delete-app",
+                json={"telegram_id": message.from_user.id, "repo_name": repo_name},
+            )
+            if resp.status_code == 404:
+                await message.answer(f"App *{repo_name}* not found.", parse_mode="Markdown")
+                return
+            resp.raise_for_status()
+    except httpx.HTTPError as e:
+        log.error("Delete app request failed: %s", e)
+        await message.answer("Something went wrong on our end. Please try again in a moment.")
+        return
+
+    await message.answer(f"*{repo_name}* has been deleted.", parse_mode="Markdown")
 
 
 # ── Main message handler ──────────────────────────────────────────────────────

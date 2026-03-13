@@ -78,6 +78,15 @@ class IssueResponse(BaseModel):
     issue_url: str
 
 
+class DeleteAppRequest(BaseModel):
+    telegram_id: int
+    repo_name: str
+
+
+class DeleteAppResponse(BaseModel):
+    success: bool
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _gitea_auth() -> tuple[str, str]:
@@ -204,6 +213,30 @@ async def create_issue(req: IssueRequest) -> IssueResponse:
         raise HTTPException(status_code=502, detail=f"Gitea error: {e}")
 
     return IssueResponse(issue_url=data["html_url"])
+
+
+@app.post("/delete-app", response_model=DeleteAppResponse)
+async def delete_app(req: DeleteAppRequest) -> DeleteAppResponse:
+    user = await db.get_user(req.telegram_id)
+    if not user or not user["verified"]:
+        raise HTTPException(status_code=403, detail="not_registered")
+
+    org = user["gitea_org"]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.delete(
+                f"{GITEA_URL}/api/v1/repos/{org}/{req.repo_name}",
+                auth=_gitea_auth(),
+            )
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="app_not_found")
+            resp.raise_for_status()
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Gitea error: {e}")
+
+    return DeleteAppResponse(success=True)
 
 
 @app.get("/me", response_model=MeResponse)

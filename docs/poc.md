@@ -14,9 +14,9 @@ An agentic platform that builds applications on sovereign infrastructure. Users 
 
 Conversation loop only: Telegram bot → FastAPI orchestrator → Ollama → reply. No agents yet — just prove the messaging pipeline works and the LLM can classify intent. Services: `traefik`, `telegram-bot`, `orchestrator`, `ollama`, `postgres`.
 
-**Phase 2 — Architecture standards**
+**Phase 2 — Architecture standards** ✅
 
-Add a `standards/` directory of YAML files: naming conventions, required labels, allowed base images, mandatory sidecar patterns. The orchestrator loads these at startup and injects them into every LLM system prompt — this is the opinionated layer that makes it a platform, not a generic assistant.
+`standards/` YAML files (naming, patterns, security) loaded by the orchestrator at startup and injected into every LLM system prompt — the opinionated layer that makes it a platform, not a generic assistant.
 
 **Phase 3 — First agent**
 

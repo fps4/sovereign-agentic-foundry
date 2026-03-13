@@ -1,0 +1,51 @@
+---
+# Mandatory architectural patterns for all platform-built services
+
+health_checks:
+  required: true
+  endpoints:
+    liveness: "GET /health"     # Returns 200 if the process is alive
+    readiness: "GET /ready"     # Returns 200 only when dependencies are up
+  response_format: { status: "ok" | "degraded" | "error" }
+  docker_healthcheck:
+    interval: 10s
+    timeout: 5s
+    retries: 5
+
+logging:
+  format: structured-json
+  required_fields: [timestamp, level, service, message]
+  levels: [DEBUG, INFO, WARNING, ERROR, CRITICAL]
+  rules:
+    - Never log secrets, tokens, or passwords
+    - Log request ID on every line within a request context
+    - Use WARNING or above in production by default
+
+http_services:
+  graceful_shutdown:
+    required: true
+    drain_seconds: 10
+  timeouts:
+    read: 30s
+    write: 30s
+    idle: 60s
+  rate_limiting: "handled at Traefik layer — do not implement in application code"
+
+workers_and_background_tasks:
+  idempotency: "All tasks must be safe to retry"
+  dead_letter: "Failed tasks after 3 retries go to a DLQ"
+  observability: "Emit a metric for every task start, success, and failure"
+
+persistence:
+  migrations:
+    tool: Alembic (Python) or Flyway (JVM)
+    rule: "Never modify an existing migration — always add a new one"
+  connection_pooling:
+    tool: pgBouncer or SQLAlchemy pool
+    max_connections: 10 per service instance
+  backups: "Managed at infra layer via pg_dump cron — services do not own their backup"
+
+configuration:
+  source: "Environment variables only — no config files baked into images"
+  secrets: "Injected via Docker secrets or env vars at runtime — never in source control"
+  defaults: "Provide safe defaults for all non-secret settings"

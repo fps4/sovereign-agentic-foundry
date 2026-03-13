@@ -7,10 +7,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 
+from standards import load_standards
+
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
-SYSTEM_PROMPT = """You are the assistant for a sovereign agentic platform that helps \
+_STANDARDS_BLOCK = load_standards()
+
+_BASE_PROMPT = """You are the assistant for a sovereign agentic platform that helps \
 users design and build applications on self-hosted infrastructure. You can:
 - Help users describe what they want to build
 - Explain architecture decisions and patterns
@@ -19,6 +23,17 @@ users design and build applications on self-hosted infrastructure. You can:
 
 Be concise and practical. When a user describes something they want to build, ask \
 clarifying questions to understand: what kind of app, what stack, any specific requirements."""
+
+SYSTEM_PROMPT = (
+    _BASE_PROMPT
+    + (
+        "\n\n## Platform architecture standards\n\n"
+        "All suggestions and generated code MUST comply with these standards:\n\n"
+        + _STANDARDS_BLOCK
+        if _STANDARDS_BLOCK
+        else ""
+    )
+)
 
 
 class State(TypedDict):

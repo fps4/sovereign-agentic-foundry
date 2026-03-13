@@ -1,0 +1,33 @@
+---
+# Naming conventions enforced across all platform-built projects
+
+services:
+  pattern: "kebab-case"
+  examples: ["user-api", "payment-worker", "auth-proxy"]
+  forbidden: ["userApi", "UserAPI", "user_api"]
+
+repositories:
+  pattern: "kebab-case"
+  prefix_by_type:
+    api: "api-"       # e.g. api-users
+    worker: "worker-" # e.g. worker-email
+    bot: "bot-"       # e.g. bot-telegram
+    lib: "lib-"       # e.g. lib-auth
+  examples: ["api-users", "worker-email", "bot-telegram"]
+
+docker_images:
+  pattern: "<registry>/<project>/<service>:<semver>"
+  examples: ["registry.local/platform/api-users:1.2.3"]
+  tags:
+    - Use semantic versioning (MAJOR.MINOR.PATCH)
+    - Never use `latest` in production deployments
+    - CI builds tag with git short SHA for traceability
+
+environment_variables:
+  pattern: "SCREAMING_SNAKE_CASE"
+  examples: ["DATABASE_URL", "OLLAMA_MODEL", "TELEGRAM_BOT_TOKEN"]
+
+database_objects:
+  tables: "snake_case plural"     # e.g. user_sessions
+  columns: "snake_case"           # e.g. created_at
+  indexes: "idx_<table>_<column>" # e.g. idx_users_email

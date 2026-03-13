@@ -89,7 +89,7 @@ DOCKER_HOST=ssh://ds1 docker compose down
 ## Build phases
 
 - **Phase 1** ✅ Conversation loop: Telegram → orchestrator → Ollama → reply
-- **Phase 2** Architecture standards: YAML rules injected into every LLM prompt
+- **Phase 2** ✅ Architecture standards: YAML rules injected into every LLM prompt
 - **Phase 3** Coder agent: scaffolds repos, commits to Gitea, triggers CI
 - **Phase 4** Infra + review agents: OpenTofu provisioning, Semgrep/Trivy gate
 - **Phase 5** Observability + web hub: Prometheus, Grafana, Next.js dashboard

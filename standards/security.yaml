@@ -1,0 +1,56 @@
+---
+# Security standards for all platform-built services
+
+base_images:
+  allowed:
+    - "python:3.12-slim"
+    - "python:3.11-slim"
+    - "node:20-alpine"
+    - "node:22-alpine"
+    - "golang:1.23-alpine"
+    - "alpine:3.20"
+    - "alpine:3.21"
+    - "debian:bookworm-slim"
+    - "nginx:alpine"
+  forbidden:
+    - "ubuntu:latest"    # unpinned — use slim variants with explicit tags
+    - "python:latest"    # unpinned
+    - "node:latest"      # unpinned
+    - Any image tagged `latest` in production builds
+  rules:
+    - Pin images to an explicit version tag, never `latest`
+    - Prefer Alpine or slim variants to minimise attack surface
+    - Run as non-root user — add `USER appuser` in Dockerfile
+
+docker_labels:
+  required_on_all_services:
+    - "platform.managed=true"
+    - "platform.version=<semver>"
+    - "platform.repo=<gitea-repo-url>"
+
+network:
+  rules:
+    - Services must only expose ports they actually use
+    - Internal services must NOT be on a public-facing network
+    - All external traffic enters through Traefik only
+    - mTLS between services in Phase 4+
+
+secrets:
+  rules:
+    - Never hardcode credentials in source code or Dockerfiles
+    - Rotate tokens after any suspected exposure
+    - Use short-lived tokens where the provider supports it
+    - ".env files are for local dev only — never commit them"
+
+dependencies:
+  rules:
+    - Pin all direct dependencies to exact versions in requirements.txt / package.json
+    - Run Trivy scan on every image build (enforced in CI from Phase 4)
+    - No dependency with a known critical CVE may be deployed
+
+container_runtime:
+  rules:
+    - "read_only_root_filesystem: true where possible"
+    - Drop all Linux capabilities then add back only what is needed
+    - No privileged containers
+    - Resource limits (CPU + memory) required on every service

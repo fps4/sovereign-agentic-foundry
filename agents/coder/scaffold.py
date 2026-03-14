@@ -127,7 +127,7 @@ def _woodpecker_yml(name: str, image: str, test_cmd: str) -> str:
         "  - name: test\n"
         f"    image: {image}\n"
         "    commands:\n"
-        "      - pip install -r requirements.txt pytest httpx --quiet\n"
+        "      - pip install -r requirements.txt pytest httpx starlette --quiet\n"
         "      - python -m pytest tests/ -v\n"
         "  - name: docker-build\n"
         "    image: docker:cli\n"

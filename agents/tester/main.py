@@ -85,9 +85,10 @@ comprehensive pytest test suite.
 Rules:
 - Cover every API endpoint: happy path, invalid input, and not-found cases
 - Mock all databases and external services using pytest fixtures or monkeypatching
-- Use the FastAPI TestClient for HTTP endpoint tests
+- Use `from starlette.testclient import TestClient` (NEVER `from fastapi import TestClient`)
 - Generate at least 3 meaningful test functions per endpoint
-- Tests must be runnable with: pip install pytest httpx fastapi && pytest tests/
+- Tests must be runnable with: pip install pytest httpx fastapi starlette && pytest tests/
+- All imports must be correct Python — starlette.testclient, not fastapi.testclient or fastapi
 
 Respond with ONLY valid JSON — no markdown, no explanation.
 
@@ -161,7 +162,7 @@ def _minimal_tests(repo: str) -> list[dict]:
     return [{
         "path": "tests/test_health.py",
         "content": (
-            "from fastapi.testclient import TestClient\n"
+            "from starlette.testclient import TestClient\n"
             "from main import app\n\n"
             "client = TestClient(app)\n\n\n"
             "def test_health():\n"
@@ -170,6 +171,15 @@ def _minimal_tests(repo: str) -> list[dict]:
             '    assert resp.json()["status"] == "ok"\n'
         ),
     }]
+
+
+def _fix_test_imports(content: str) -> str:
+    """Fix common LLM import mistakes in generated test files."""
+    return (
+        content
+        .replace("from fastapi import TestClient", "from starlette.testclient import TestClient")
+        .replace("from fastapi.testclient import TestClient", "from starlette.testclient import TestClient")
+    )
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -232,6 +242,12 @@ async def generate_tests(req: GenerateTestsRequest) -> GenerateTestsResponse:
     paths = {f["path"] for f in test_files}
     if not any(p.startswith("tests/") and p.endswith("__init__.py") for p in paths):
         test_files.append({"path": "tests/__init__.py", "content": ""})
+
+    # Fix common LLM import mistakes
+    test_files = [
+        {**f, "content": _fix_test_imports(f["content"])} if f["path"].endswith(".py") else f
+        for f in test_files
+    ]
 
     duration_ms = int((_time.monotonic() - _t0) * 1000)
     test_paths = [f["path"] for f in test_files]

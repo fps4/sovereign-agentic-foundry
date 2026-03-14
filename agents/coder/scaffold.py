@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
@@ -38,6 +39,11 @@ Always include:
 4. .woodpecker.yml — see template below
 5. README.md — one paragraph description
 
+requirements.txt rules (Python/FastAPI):
+- Always include "uvicorn[standard]>=0.30" when using FastAPI.
+- Always include "fastapi>=0.115" (not an old pinned version like 0.1.x).
+- Always include "pydantic>=2.0".
+
 .woodpecker.yml template:
 steps:
   - name: test
@@ -59,6 +65,7 @@ steps:
     when:
       branch: main
 
+IMPORTANT: The test step must ONLY run "pip install" and "pytest". Never put "uvicorn", "gunicorn", or any server startup command in the test step.
 Adjust the test step image and commands to match the stack.
 """
 
@@ -84,11 +91,40 @@ async def scaffold_project(
         data = json.loads(result.content)
         files = data.get("files", [])
         if files and all("path" in f and "content" in f for f in files):
-            return _inject_domain(files)
+            return _inject_domain(_sanitize_files(files))
     except (json.JSONDecodeError, AttributeError, TypeError):
         pass
 
     return _minimal_scaffold(name, description, stack)
+
+
+def _sanitize_files(files: list[dict]) -> list[dict]:
+    """Fix common LLM mistakes in generated files."""
+    result = []
+    for f in files:
+        path, content = f["path"], f["content"]
+
+        if path == "requirements.txt":
+            # Ensure uvicorn is present when fastapi is used
+            if "fastapi" in content.lower() and "uvicorn" not in content.lower():
+                content = content.rstrip() + "\nuvicorn[standard]>=0.30\n"
+
+        if path == ".woodpecker.yml":
+            # Remove any server-startup commands from the test step.
+            # The test step must only install deps and run pytest.
+            content = re.sub(
+                r"(- name: test.*?commands:.*?)((?:\n      -[^\n]*)*)",
+                lambda m: m.group(1) + re.sub(
+                    r"\n      -[^\n]*(uvicorn|gunicorn|flask run|node server)[^\n]*",
+                    "",
+                    m.group(2),
+                ),
+                content,
+                flags=re.DOTALL,
+            )
+
+        result.append({**f, "content": content})
+    return result
 
 
 def _inject_domain(files: list[dict]) -> list[dict]:

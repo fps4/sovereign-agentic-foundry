@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from pythonjsonlogger.jsonlogger import JsonFormatter
 
 from gitea import create_repo_with_files
+from local_test import run_local_tests
 from scaffold import scaffold_project
 
 APP_DOMAIN = os.getenv("APP_DOMAIN", "localhost")
@@ -83,6 +84,13 @@ async def build(req: BuildRequest) -> BuildResponse:
         )
         log.info("build.scaffolded", extra={"app_name": req.name, "file_count": len(files), "run_id": req.run_id})
         await _log(req.run_id, "build.scaffolded", repo=req.name, details={"file_count": len(files)})
+        passed, reason = await run_local_tests(files)
+        if not passed:
+            log.error("build.test_failed", extra={"app_name": req.name, "reason": reason, "run_id": req.run_id})
+            await _log(req.run_id, "build.test_failed", repo=req.name, status="error", details={"reason": reason})
+            raise HTTPException(status_code=422, detail=f"Local tests failed: {reason}")
+        log.info("build.test_passed", extra={"app_name": req.name, "run_id": req.run_id})
+        await _log(req.run_id, "build.test_passed", repo=req.name)
         repo_url = await create_repo_with_files(
             req.name, req.description, files, req.org
         )

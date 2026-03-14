@@ -12,7 +12,7 @@ The platform supports five app types out of the box:
 | **Connector** | Headless backend linking two systems, no UI |
 | **Assistant** | RAG-powered chat and Q&A over your documents |
 
-See [docs/poc.md](docs/poc.md) for the full design, [docs/agent-pipeline.md](docs/agent-pipeline.md) for the agent pipeline, and [docs/app-types.md](docs/app-types.md) for type definitions and coverage.
+See [docs/poc.md](docs/poc.md) for the full product and technology design.
 
 ## Prerequisites
 

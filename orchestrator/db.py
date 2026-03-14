@@ -73,6 +73,13 @@ async def get_user(telegram_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+async def get_all_verified_users() -> list[dict]:
+    rows = await _pool.fetch(
+        "SELECT telegram_id, gitea_org FROM users WHERE verified = TRUE AND gitea_org IS NOT NULL"
+    )
+    return [dict(r) for r in rows]
+
+
 async def upsert_pending_user(
     telegram_id: int, telegram_username: str, code: str
 ) -> None:

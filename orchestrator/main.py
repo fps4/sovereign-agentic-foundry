@@ -366,6 +366,46 @@ async def me(telegram_id: int) -> MeResponse:
     return MeResponse(registered=bool(user and user["verified"]))
 
 
+@app.post("/admin/backfill-apps")
+async def backfill_apps() -> dict:
+    """One-shot: sync Gitea repos into the apps table for all verified users."""
+    users = await db.get_all_verified_users()
+    inserted = 0
+    skipped = 0
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for user in users:
+            org = user["gitea_org"]
+            if not org:
+                continue
+            resp = await client.get(
+                f"{GITEA_URL}/api/v1/orgs/{org}/repos?limit=50",
+                auth=_gitea_auth(),
+            )
+            if resp.status_code != 200:
+                continue
+            for repo in resp.json():
+                name = repo["name"]
+                existing = await db.get_app_by_name(user["telegram_id"], name)
+                if existing:
+                    skipped += 1
+                    continue
+                app_id = await db.register_app(
+                    telegram_id=user["telegram_id"],
+                    name=name,
+                    description=repo.get("description", ""),
+                    app_type="",
+                )
+                await db.update_app_status(
+                    app_id, "active",
+                    repo_url=repo["html_url"],
+                    app_url=f"http://{name}.{APP_DOMAIN}",
+                )
+                inserted += 1
+
+    return {"inserted": inserted, "skipped": skipped}
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}

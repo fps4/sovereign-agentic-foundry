@@ -20,6 +20,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
       - db_data:/var/lib/postgresql/data
+      - ./infra/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U platform"]
       interval: 5s
@@ -133,6 +134,52 @@ services:
     networks:
       - platform
 
+  designer:
+    build: ./agents/designer
+    volumes:
+      - ./standards:/app/standards:ro
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      GITEA_URL: http://gitea:3000
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
+      GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
+    depends_on:
+      gitea-init:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8003/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - platform
+
+  tester:
+    build: ./agents/tester
+    volumes:
+      - ./standards:/app/standards:ro
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      GITEA_URL: http://gitea:3000
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
+      GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
+    depends_on:
+      gitea-init:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - platform
+
   coder:
     build: ./agents/coder
     environment:
@@ -163,6 +210,7 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
       CODER_URL: http://coder:8001
+      DESIGNER_URL: http://designer:8003
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
       GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
@@ -176,6 +224,10 @@ services:
         condition: service_healthy
       coder:
         condition: service_healthy
+      designer:
+        condition: service_healthy
+      tester:
+        condition: service_healthy
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.orchestrator.rule=PathPrefix(`/`)"
@@ -187,9 +239,7 @@ services:
   monitor:
     build: ./agents/monitor
     environment:
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      ORCHESTRATOR_URL: http://orchestrator:8000
       MONITOR_POLL_INTERVAL: ${MONITOR_POLL_INTERVAL:-60}
       MONITOR_COOLDOWN: ${MONITOR_COOLDOWN:-600}
       MONITOR_LOG_LINES: ${MONITOR_LOG_LINES:-50}
@@ -208,6 +258,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       ORCHESTRATOR_URL: http://orchestrator:8000
       INVITE_CODE: ${INVITE_CODE:-}
+      DB_URL: postgresql://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform
     depends_on:
       - orchestrator
     restart: unless-stopped

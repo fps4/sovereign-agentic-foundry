@@ -3,15 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 
 import httpx
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
+
+from storage import PostgresStorage
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -19,19 +20,19 @@ log = logging.getLogger(__name__)
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8000")
 INVITE_CODE = os.getenv("INVITE_CODE", "")
+DB_URL = os.getenv("DB_URL", "")
 
 if not INVITE_CODE:
     log.warning("INVITE_CODE is not set — registration is open to anyone")
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+router = Router()
 
 
 # ── FSM states ────────────────────────────────────────────────────────────────
 
 class RegistrationStates(StatesGroup):
     waiting_invite = State()
-    waiting_verification = State()
 
 
 class BuildStates(StatesGroup):
@@ -58,7 +59,7 @@ _HELP_REGISTERED = (
     "• *Forms* — capture and manage information\n"
     "• *Dashboards* — display data at a glance\n"
     "• *Workflows* — guide tasks through steps or approvals\n"
-    "• *Integrations* — connect two services behind the scenes\n"
+    "• *Connectors* — connect two services behind the scenes\n"
     "• *Assistants* — answer questions from your documents\n\n"
     "*Commands*\n"
     "/build — start building a new app\n"
@@ -110,7 +111,7 @@ async def _begin_registration(message: Message, state: FSMContext) -> None:
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
-@dp.message(CommandStart())
+@router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     registered = await _is_registered(message.from_user.id)
     if registered:
@@ -122,7 +123,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await _begin_registration(message, state)
 
 
-@dp.message(Command("help"))
+@router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     registered = await _is_registered(message.from_user.id)
     if registered:
@@ -131,7 +132,7 @@ async def cmd_help(message: Message) -> None:
         await message.answer("Send /register to create your account and get started.")
 
 
-@dp.message(Command("register"))
+@router.message(Command("register"))
 async def cmd_register(message: Message, state: FSMContext) -> None:
     registered = await _is_registered(message.from_user.id)
     if registered:
@@ -142,7 +143,7 @@ async def cmd_register(message: Message, state: FSMContext) -> None:
     await _begin_registration(message, state)
 
 
-@dp.message(Command("apps"))
+@router.message(Command("apps"))
 async def cmd_apps(message: Message) -> None:
     await bot.send_chat_action(message.chat.id, "typing")
     apps = await _fetch_apps(message.from_user.id)
@@ -156,11 +157,19 @@ async def cmd_apps(message: Message) -> None:
         return
     lines = ["*Your Apps*\n"]
     for app in apps:
-        lines.append(f"• [{app['name']}]({app['url']}) — {app['description']}")
+        status = app["status"]
+        issue_count = app.get("issue_count", 0)
+        badge = f"[{status}"
+        if issue_count:
+            badge += f", {issue_count} issue{'s' if issue_count != 1 else ''}"
+        badge += "]"
+        url = app.get("url") or ""
+        name_part = f"[{app['name']}]({url})" if url else app["name"]
+        lines.append(f"• {name_part} {badge} — {app['description']}")
     await message.answer("\n".join(lines), parse_mode="Markdown")
 
 
-@dp.message(Command("build"))
+@router.message(Command("build"))
 async def cmd_build(message: Message, state: FSMContext) -> None:
     registered = await _is_registered(message.from_user.id)
     if not registered:
@@ -174,7 +183,7 @@ async def cmd_build(message: Message, state: FSMContext) -> None:
     )
 
 
-@dp.message(Command("fix"))
+@router.message(Command("fix"))
 async def cmd_fix(message: Message, state: FSMContext) -> None:
     registered = await _is_registered(message.from_user.id)
     if not registered:
@@ -201,7 +210,7 @@ async def cmd_fix(message: Message, state: FSMContext) -> None:
     await message.answer("\n".join(lines), parse_mode="Markdown")
 
 
-@dp.message(Command("delete"))
+@router.message(Command("delete"))
 async def cmd_delete(message: Message, state: FSMContext) -> None:
     registered = await _is_registered(message.from_user.id)
     if not registered:
@@ -230,7 +239,7 @@ async def cmd_delete(message: Message, state: FSMContext) -> None:
 
 # ── Registration flow ─────────────────────────────────────────────────────────
 
-@dp.message(RegistrationStates.waiting_invite)
+@router.message(RegistrationStates.waiting_invite)
 async def handle_invite_code(message: Message, state: FSMContext) -> None:
     if not message.text:
         return
@@ -265,53 +274,35 @@ async def handle_invite_code(message: Message, state: FSMContext) -> None:
         )
         return
 
-    await state.set_state(RegistrationStates.waiting_verification)
-    await message.answer(
-        f"Your confirmation code is: *{data['code']}*\n\n"
-        "Reply with this code to finish setting up your account.",
-        parse_mode="Markdown",
-    )
-
-
-@dp.message(RegistrationStates.waiting_verification)
-async def handle_verification_code(message: Message, state: FSMContext) -> None:
-    if not message.text or not re.fullmatch(r"\d{6}", message.text.strip()):
-        await message.answer("Please enter the 6-digit confirmation code you received.")
-        return
-
+    # Use the server-issued code directly — no need to show it to the user and ask them to re-enter it.
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"{ORCHESTRATOR_URL}/verify",
-                json={
-                    "telegram_id": message.from_user.id,
-                    "code": message.text.strip(),
-                },
+                json={"telegram_id": message.from_user.id, "code": data["code"]},
             )
             resp.raise_for_status()
-            data = resp.json()
+            result = resp.json()
     except httpx.HTTPError as e:
         log.error("Verify request failed: %s", e)
+        await state.clear()
         await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
 
-    if data["success"]:
-        await state.clear()
+    await state.clear()
+    if result["success"]:
         await message.answer(
             f"You're all set, {message.from_user.first_name}! Your personal space is ready.\n\n"
             + _HELP_REGISTERED,
             parse_mode="Markdown",
         )
-    elif data["message"] == "wrong_code":
-        await message.answer("That code doesn't match. Please check and try again.")
     else:
-        await state.clear()
         await message.answer("Something went wrong. Please send /register to start over.")
 
 
 # ── Build flow ────────────────────────────────────────────────────────────────
 
-@dp.message(BuildStates.waiting_description)
+@router.message(BuildStates.waiting_description)
 async def handle_build_description(message: Message, state: FSMContext) -> None:
     if not message.text:
         return
@@ -329,12 +320,12 @@ async def handle_build_description(message: Message, state: FSMContext) -> None:
         log.error("Orchestrator request failed: %s", e)
         await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
-    await message.answer(data["reply"])
+    await message.answer(data["reply"], parse_mode="Markdown")
 
 
 # ── Fix flow ──────────────────────────────────────────────────────────────────
 
-@dp.message(FixStates.waiting_app_selection)
+@router.message(FixStates.waiting_app_selection)
 async def handle_fix_app_selection(message: Message, state: FSMContext) -> None:
     if not message.text:
         return
@@ -356,7 +347,7 @@ async def handle_fix_app_selection(message: Message, state: FSMContext) -> None:
     )
 
 
-@dp.message(FixStates.waiting_issue_description)
+@router.message(FixStates.waiting_issue_description)
 async def handle_fix_description(message: Message, state: FSMContext) -> None:
     if not message.text:
         return
@@ -392,7 +383,7 @@ async def handle_fix_description(message: Message, state: FSMContext) -> None:
 
 # ── Delete flow ───────────────────────────────────────────────────────────────
 
-@dp.message(DeleteStates.waiting_app_selection)
+@router.message(DeleteStates.waiting_app_selection)
 async def handle_delete_app_selection(message: Message, state: FSMContext) -> None:
     if not message.text:
         return
@@ -414,7 +405,7 @@ async def handle_delete_app_selection(message: Message, state: FSMContext) -> No
     )
 
 
-@dp.message(DeleteStates.waiting_confirmation)
+@router.message(DeleteStates.waiting_confirmation)
 async def handle_delete_confirmation(message: Message, state: FSMContext) -> None:
     if not message.text:
         return
@@ -448,7 +439,7 @@ async def handle_delete_confirmation(message: Message, state: FSMContext) -> Non
 
 # ── Main message handler ──────────────────────────────────────────────────────
 
-@dp.message()
+@router.message()
 async def handle_message(message: Message) -> None:
     if not message.text:
         return
@@ -475,11 +466,19 @@ async def handle_message(message: Message) -> None:
         )
         return
 
-    await message.answer(data["reply"])
+    await message.answer(data["reply"], parse_mode="Markdown")
 
 
 async def main() -> None:
     log.info("Starting Telegram bot (polling)...")
+    if DB_URL:
+        log.info("Using PostgresStorage for FSM state persistence")
+        storage = await PostgresStorage.create(DB_URL)
+    else:
+        log.warning("DB_URL not set — FSM state will not persist across restarts")
+        storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
+    dp.include_router(router)
     await dp.start_polling(bot)
 
 

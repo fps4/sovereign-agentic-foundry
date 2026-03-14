@@ -13,12 +13,20 @@ import asyncio
 import db
 from workflow import graph, run_build
 
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+
+_SUMMARIZE_PROMPT = """\
+You are a platform monitoring agent. A deployed app has errors in its logs.
+Summarise the issue in 2-3 sentences for a non-technical user.
+Cover: what went wrong, the likely cause, and a suggested action.
+Do not include raw stack traces or log lines. Be concise and clear.
+"""
 GITEA_URL = os.getenv("GITEA_URL", "http://gitea:3000")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "platform")
 GITEA_ADMIN_PASS = os.getenv("GITEA_ADMIN_PASS", "")
 APP_DOMAIN = os.getenv("APP_DOMAIN", "localhost")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -64,7 +72,11 @@ class VerifyResponse(BaseModel):
 class AppInfo(BaseModel):
     name: str
     description: str
-    url: str
+    app_type: str
+    status: str
+    url: str | None
+    repo_url: str | None
+    issue_count: int
 
 
 class MeResponse(BaseModel):
@@ -91,6 +103,18 @@ class DeleteAppResponse(BaseModel):
     success: bool
 
 
+class ReportIssueRequest(BaseModel):
+    telegram_id: int
+    log_excerpt: str
+    is_breaking: bool
+    error_hash: str
+
+
+class ReportIssueResponse(BaseModel):
+    issue_url: str | None
+    notified: bool
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _gitea_auth() -> tuple[str, str]:
@@ -110,6 +134,36 @@ async def _create_gitea_org(org: str, description: str) -> None:
         )
         if resp.status_code not in (201, 422):  # 422 = already exists
             resp.raise_for_status()
+
+
+async def _create_gitea_issue(org: str, repo: str, title: str, body: str) -> str:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{GITEA_URL}/api/v1/repos/{org}/{repo}/issues",
+            auth=_gitea_auth(),
+            json={"title": title, "body": body},
+        )
+        resp.raise_for_status()
+        return resp.json()["html_url"]
+
+
+async def _summarise(app_name: str, log_excerpt: str) -> str:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_ollama import ChatOllama
+    llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
+    result = await llm.ainvoke([
+        SystemMessage(content=_SUMMARIZE_PROMPT),
+        HumanMessage(content=f"App: {app_name}\n\nLogs:\n{log_excerpt[-2000:]}"),
+    ])
+    return result.content.strip()
+
+
+async def _telegram_notify(telegram_id: int, text: str) -> None:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        await client.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": telegram_id, "text": text, "parse_mode": "Markdown"},
+        )
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -156,23 +210,37 @@ async def chat(req: ChatRequest) -> ChatResponse:
         )
     try:
         org = user["gitea_org"] or ""
+        history = await db.get_history(req.user_id)
         result = await graph.ainvoke(
             {
                 "user_id": req.user_id,
                 "message": req.message,
+                "history": history,
                 "reply": "",
                 "intent": "",
                 "task_spec": {},
                 "org": org,
+                "repo_url": None,
+                "issue_url": None,
             }
         )
+        await db.append_message(req.user_id, "user", req.message)
+        await db.append_message(req.user_id, "assistant", result["reply"])
         if result["intent"] == "build" and result.get("task_spec"):
+            spec = result["task_spec"]
+            app_id = await db.register_app(
+                telegram_id=int(req.user_id),
+                name=spec["name"],
+                description=spec.get("description", ""),
+                app_type=spec.get("app_type", ""),
+            )
             asyncio.create_task(
                 run_build(
-                    spec=result["task_spec"],
+                    spec=spec,
                     org=org,
                     telegram_id=int(req.user_id),
                     bot_token=TELEGRAM_BOT_TOKEN,
+                    app_id=app_id,
                 )
             )
         return ChatResponse(reply=result["reply"])
@@ -186,24 +254,18 @@ async def list_apps(telegram_id: int) -> list[AppInfo]:
     if not user or not user["verified"]:
         raise HTTPException(status_code=403, detail="not_registered")
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{GITEA_URL}/api/v1/orgs/{user['gitea_org']}/repos",
-                auth=_gitea_auth(),
-                params={"limit": 50},
-            )
-            resp.raise_for_status()
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Gitea unreachable: {e}")
-
+    apps = await db.get_apps_for_user(telegram_id)
     return [
         AppInfo(
-            name=r["name"],
-            description=r.get("description") or "No description",
-            url=f"http://{r['name']}.{APP_DOMAIN}",
+            name=a["name"],
+            description=a["description"] or "No description",
+            app_type=a["app_type"],
+            status=a["status"],
+            url=a["app_url"],
+            repo_url=a["repo_url"],
+            issue_count=a["issue_count"],
         )
-        for r in resp.json()
+        for a in apps
     ]
 
 
@@ -215,18 +277,11 @@ async def create_issue(req: IssueRequest) -> IssueResponse:
 
     org = user["gitea_org"]
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{GITEA_URL}/api/v1/repos/{org}/{req.repo_name}/issues",
-                auth=_gitea_auth(),
-                json={"title": req.title, "body": req.body},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        issue_url = await _create_gitea_issue(org, req.repo_name, req.title, req.body)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Gitea error: {e}")
 
-    return IssueResponse(issue_url=data["html_url"])
+    return IssueResponse(issue_url=issue_url)
 
 
 @app.post("/delete-app", response_model=DeleteAppResponse)
@@ -250,7 +305,59 @@ async def delete_app(req: DeleteAppRequest) -> DeleteAppResponse:
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Gitea error: {e}")
 
+    await db.soft_delete_app(req.telegram_id, req.repo_name)
     return DeleteAppResponse(success=True)
+
+
+@app.post("/apps/{app_name}/report-issue", response_model=ReportIssueResponse)
+async def report_issue(app_name: str, req: ReportIssueRequest) -> ReportIssueResponse:
+    app_record = await db.get_app_by_name(req.telegram_id, app_name)
+    if not app_record or app_record["status"] == "deleted":
+        return ReportIssueResponse(issue_url=None, notified=False)
+
+    # Dedup check — if we've seen this exact error before, stay silent
+    existing = await db.get_app_issue(app_record["id"], req.error_hash)
+    if existing is not None:
+        return ReportIssueResponse(issue_url=existing, notified=False)
+
+    user = await db.get_user(req.telegram_id)
+    if not user:
+        return ReportIssueResponse(issue_url=None, notified=False)
+
+    try:
+        summary = await _summarise(app_name, req.log_excerpt)
+    except Exception:
+        summary = "Errors were detected but could not be summarised automatically."
+
+    title = summary[:72] + ("…" if len(summary) > 72 else "")
+    issue_url: str | None = None
+    try:
+        issue_url = await _create_gitea_issue(
+            user["gitea_org"],
+            app_name,
+            title,
+            f"{summary}\n\n---\n*Detected automatically by the platform monitor.*",
+        )
+    except httpx.HTTPError:
+        pass
+
+    await db.insert_app_issue(app_record["id"], req.error_hash, issue_url, req.is_breaking)
+
+    new_status = "failed" if req.is_breaking else "degraded"
+    await db.update_app_status(app_record["id"], new_status)
+
+    notified = False
+    try:
+        label = "🔴 Breaking issue" if req.is_breaking else "⚠️ Issue"
+        text = f"{label} detected in *{app_name}*\n\n{summary}"
+        if issue_url:
+            text += f"\n\nTracked: {issue_url}"
+        await _telegram_notify(req.telegram_id, text)
+        notified = True
+    except Exception:
+        pass
+
+    return ReportIssueResponse(issue_url=issue_url, notified=notified)
 
 
 @app.get("/me", response_model=MeResponse)

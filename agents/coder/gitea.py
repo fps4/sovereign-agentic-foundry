@@ -1,7 +1,8 @@
 """Gitea API client.
 
-Creates a repository and commits files using the Gitea REST API.
+Creates or updates a repository and commits files using the Gitea REST API.
 If an org is provided repos are created under that org; otherwise under the admin user.
+If the repo already exists (created by the designer agent) files are upserted.
 """
 
 from __future__ import annotations
@@ -24,14 +25,39 @@ def _auth() -> httpx.BasicAuth:
     return httpx.BasicAuth(GITEA_ADMIN_USER, GITEA_ADMIN_PASS)
 
 
+async def _upsert_file(client: httpx.AsyncClient, owner: str, repo: str, f: dict) -> None:
+    """Create a file, or update it if it already exists."""
+    path = f["path"]
+    content_b64 = base64.b64encode(f["content"].encode()).decode()
+    resp = await client.post(
+        f"/api/v1/repos/{owner}/{repo}/contents/{path}",
+        json={"message": f"feat: add {path}", "content": content_b64, "branch": "main"},
+    )
+    if resp.status_code == 422:
+        # File exists — fetch its SHA and update
+        get_resp = await client.get(f"/api/v1/repos/{owner}/{repo}/contents/{path}")
+        get_resp.raise_for_status()
+        sha = get_resp.json()["sha"]
+        put_resp = await client.put(
+            f"/api/v1/repos/{owner}/{repo}/contents/{path}",
+            json={
+                "message": f"feat: update {path}",
+                "content": content_b64,
+                "sha": sha,
+                "branch": "main",
+            },
+        )
+        put_resp.raise_for_status()
+    else:
+        resp.raise_for_status()
+
+
 async def create_repo_with_files(
     name: str, description: str, files: list[dict], org: str = ""
 ) -> str:
-    """Create a Gitea repo under `org` (or admin user if blank), commit all files."""
+    """Create a Gitea repo (or reuse if it already exists) and commit all files."""
     owner = org if org else GITEA_ADMIN_USER
-    create_url = (
-        f"/api/v1/orgs/{org}/repos" if org else "/api/v1/user/repos"
-    )
+    create_url = f"/api/v1/orgs/{org}/repos" if org else "/api/v1/user/repos"
 
     async with httpx.AsyncClient(
         base_url=GITEA_URL, auth=_auth(), timeout=30.0
@@ -46,24 +72,10 @@ async def create_repo_with_files(
                 "default_branch": "main",
             },
         )
-        if resp.status_code == 409:
-            raise RuntimeError(
-                f"Repository '{name}' already exists. "
-                "Choose a different name or delete the existing repo."
-            )
-        resp.raise_for_status()
-        repo = resp.json()
+        if resp.status_code not in (201, 409):
+            resp.raise_for_status()
 
         for f in files:
-            content_b64 = base64.b64encode(f["content"].encode()).decode()
-            file_resp = await client.post(
-                f"/api/v1/repos/{owner}/{name}/contents/{f['path']}",
-                json={
-                    "message": f"chore: scaffold {f['path']}",
-                    "content": content_b64,
-                    "branch": "main",
-                },
-            )
-            file_resp.raise_for_status()
+            await _upsert_file(client, owner, name, f)
 
-        return repo["html_url"]
+        return f"{GITEA_URL}/{owner}/{name}"

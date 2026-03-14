@@ -1,11 +1,13 @@
 """Log monitoring agent.
 
-Polls running platform app containers for errors, summarises them with an LLM,
-and pushes a Telegram message directly to the app owner — no user action needed.
+Polls running platform app containers for errors and reports them to the
+orchestrator's /apps/{name}/report-issue endpoint, which owns deduplication,
+Gitea issue creation, LLM summarisation, and Telegram notifications.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -13,15 +15,11 @@ import time
 
 import docker
 import httpx
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_ollama import ChatOllama
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8000")
 POLL_INTERVAL = int(os.getenv("MONITOR_POLL_INTERVAL", "60"))
 COOLDOWN = int(os.getenv("MONITOR_COOLDOWN", "600"))
 LOG_LINES = int(os.getenv("MONITOR_LOG_LINES", "50"))
@@ -31,46 +29,46 @@ _ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 
-_SUMMARIZE_PROMPT = """\
-You are a platform monitoring agent. A deployed app has errors in its logs.
-Summarise the issue in 2-3 sentences for a non-technical user.
-Cover: what went wrong, the likely cause, and a suggested action.
-Do not include raw stack traces or log lines. Be concise and clear.
-"""
-
-# container_id → monotonic timestamp of last alert
+# container_id → monotonic timestamp of last check that found errors
 _cooldowns: dict[str, float] = {}
 
 
 def _platform_containers() -> list:
     client = docker.from_env()
-    return client.containers.list(filters={"label": "platform.owner"})
+    return client.containers.list(
+        all=True, filters={"label": "platform.owner"}
+    )
 
 
 def _read_logs(container) -> str:
     return container.logs(tail=LOG_LINES, timestamps=False).decode("utf-8", errors="replace")
 
 
-def _has_errors(logs: str) -> bool:
-    return bool(_ERROR_RE.search(logs))
+async def _platform_containers_async() -> list:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _platform_containers)
 
 
-async def _summarise(app_name: str, logs: str) -> str:
-    llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
-    result = await llm.ainvoke([
-        SystemMessage(content=_SUMMARIZE_PROMPT),
-        HumanMessage(content=f"App: {app_name}\n\nLogs:\n{logs[-2000:]}"),
-    ])
-    return result.content.strip()
+async def _read_logs_async(container) -> str:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _read_logs, container)
 
 
-async def _notify(telegram_id: int, app_name: str, summary: str) -> None:
-    text = f"Issue detected in *{app_name}*\n\n{summary}"
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        await client.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": telegram_id, "text": text, "parse_mode": "Markdown"},
-        )
+def _is_breaking(container) -> bool:
+    """A container is breaking if it has exited or its health check is unhealthy."""
+    if container.status != "running":
+        return True
+    health = container.attrs.get("State", {}).get("Health", {})
+    return health.get("Status") == "unhealthy"
+
+
+def _error_hash(logs: str) -> str:
+    """Stable hash of the first error line found — used for deduplication."""
+    for line in logs.splitlines():
+        if _ERROR_RE.search(line):
+            normalised = re.sub(r"\d+", "", line.lower()).strip()
+            return hashlib.sha256(normalised.encode()).hexdigest()[:16]
+    return hashlib.sha256(logs[-500:].encode()).hexdigest()[:16]
 
 
 async def _check(container) -> None:
@@ -83,25 +81,42 @@ async def _check(container) -> None:
         log.warning("Cannot parse telegram_id from label: %s", owner)
         return
 
+    breaking = _is_breaking(container)
+
     now = time.monotonic()
-    if now - _cooldowns.get(container.id, 0) < COOLDOWN:
+    if not breaking and now - _cooldowns.get(container.id, 0) < COOLDOWN:
         return
 
-    logs = _read_logs(container)
-    if not _has_errors(logs):
+    logs = await _read_logs_async(container)
+    if not breaking and not _ERROR_RE.search(logs):
         return
 
     _cooldowns[container.id] = now
-    log.info("Errors in %s — summarising", container.name)
+    error_hash = _error_hash(logs)
 
+    log.info(
+        "Reporting issue for %s (breaking=%s hash=%s)",
+        container.name, breaking, error_hash,
+    )
     try:
-        summary = await _summarise(container.name, logs)
-    except Exception as exc:
-        log.error("Summarisation failed for %s: %s", container.name, exc)
-        summary = "Errors were detected but could not be summarised automatically."
-
-    await _notify(telegram_id, container.name, summary)
-    log.info("Alert sent to telegram_id=%d for app %s", telegram_id, container.name)
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{ORCHESTRATOR_URL}/apps/{container.name}/report-issue",
+                json={
+                    "telegram_id": telegram_id,
+                    "log_excerpt": logs[-2000:],
+                    "is_breaking": breaking,
+                    "error_hash": error_hash,
+                },
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            log.info(
+                "report-issue response for %s: notified=%s issue_url=%s",
+                container.name, result.get("notified"), result.get("issue_url"),
+            )
+    except httpx.HTTPError as exc:
+        log.error("Failed to report issue for %s: %s", container.name, exc)
 
 
 async def monitor_loop() -> None:
@@ -111,7 +126,7 @@ async def monitor_loop() -> None:
     )
     while True:
         try:
-            containers = _platform_containers()
+            containers = await _platform_containers_async()
             log.debug("Checking %d platform container(s)", len(containers))
             for container in containers:
                 await _check(container)

@@ -1,7 +1,9 @@
 # POC Design
 
-An agentic platform that builds applications on sovereign infrastructure. Users describe what they want via Telegram → an orchestration layer interprets intent against architecture standards → agents plan and execute the build → results and status stream back to the user.
+An agentic platform that builds applications on sovereign infrastructure. Users describe what they want via Telegram → a designer agent clarifies intent and writes a structured spec → specialist agents build, test, and deploy → a monitor agent closes the feedback loop.
 
+- [Agent pipeline design](./agent-pipeline.md)
+- [App types](./app-types.md)
 - [High-level system design](./diagrams/high-level-system-design.png)
 - [Orchestration detail](./diagrams/orchestration.png)
 - [Docker Compose services](./diagrams/services.png)
@@ -10,7 +12,7 @@ An agentic platform that builds applications on sovereign infrastructure. Users 
 
 ## Build phases
 
-**Phase 1 — Skeleton**
+**Phase 1 — Skeleton** ✅
 
 Conversation loop only: Telegram bot → FastAPI orchestrator → Ollama → reply. No agents yet — just prove the messaging pipeline works and the LLM can classify intent. Services: `traefik`, `telegram-bot`, `orchestrator`, `ollama`, `postgres`.
 
@@ -20,7 +22,7 @@ Conversation loop only: Telegram bot → FastAPI orchestrator → Ollama → rep
 
 **Phase 3 — First agent** ✅
 
-`agents/coder/`: receives a task spec extracted by the orchestrator's intent classifier, uses the LLM to scaffold a repo (files + Dockerfile + `.woodpecker.yml`), commits to Gitea via API, and returns the repo URL. Woodpecker CI triggers a pipeline on every push. New services: `gitea`, `woodpecker-server`, `woodpecker-agent`, `coder`; per-user Gitea orgs with Telegram code-based registration enforce tenancy.
+`agents/coder/`: receives a task spec extracted by the orchestrator's intent classifier, uses the LLM to scaffold a repo (files + Dockerfile + `.woodpecker.yml`), commits to Gitea via API, and returns the repo URL. Woodpecker CI triggers a pipeline on every push. New services: `gitea`, `woodpecker-server`, `woodpecker-agent`, `coder`; per-user Gitea orgs with invite-code registration enforce tenancy.
 
 ## Deferred to a later stage with multi-node Docker or K8S
 
@@ -38,31 +40,29 @@ Add Prometheus + Grafana for the platform itself, and a minimal Next.js dashboar
 
 **LangGraph** models agent execution as a directed graph with checkpointed state — workflows can pause and resume, which matters when a deploy takes minutes. State is stored in PostgreSQL so nothing is lost on restart.
 
-**Gitea + Woodpecker CI** are fully self-hosted and purpose-built to work together. ArgoCD watches Gitea for GitOps-style deployments to K3s (or plain Docker Compose for the POC).
+**Gitea + Woodpecker CI** are fully self-hosted and purpose-built to work together. Woodpecker triggers on every push to Gitea; the deploy step runs the container with Traefik labels so it is immediately accessible under `APP_DOMAIN`.
 
 **Ollama** exposes any local model (Mistral, Llama 3, Qwen2.5-Coder) via HTTP with no setup overhead. Qwen2.5-Coder-32B is the best choice for the coder agent if VRAM allows; Llama 3.1 8B handles intent classification well.
 
-**Qdrant** is the vector store for RAG over architecture standards, past project patterns, and documentation — prevents hallucination on platform-specific questions.
-
-**Tenancy** is enforced at the Gitea organisation level. Each registered user gets a private Gitea org (`user-<telegram_id>`). The orchestrator looks up the user's org on every request and scopes all repo operations to it. Registration uses a 6-digit verification code exchanged over Telegram — no email or external identity provider required.
+**Tenancy** is enforced at the Gitea organisation level. Each registered user gets a private Gitea org (`user-<telegram_id>`). The orchestrator scopes all repo operations to the user's org. Registration requires an invite code supplied over Telegram — no email or external identity provider needed. If `INVITE_CODE` is unset, registration is open.
 
 ---
 
 ## Repo structure
 
 ```
-platform/
+sovereign-agentic-foundry/
 ├── docker-compose.yml
-├── standards/          # Architecture YAML rules
+├── standards/          # Architecture YAML rules (naming, patterns, security)
 │   ├── patterns.yaml
 │   ├── security.yaml
 │   └── naming.yaml
-├── orchestrator/       # FastAPI + LangGraph
+├── orchestrator/       # FastAPI + LangGraph (intent classification, chat, registry)
 ├── agents/
-│   ├── coder/
-│   ├── infra/
-│   └── review/
+│   ├── coder/          # Scaffolds repos and commits to Gitea
+│   └── monitor/        # Polls containers, files issues, notifies owners
 ├── bots/
-│   └── telegram/
-└── infra/              # Traefik config, Gitea setup
+│   └── telegram/       # Telegram polling bot
+├── infra/              # Traefik config
+└── docs/               # Design docs and diagrams
 ```

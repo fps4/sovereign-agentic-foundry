@@ -1,0 +1,34 @@
+---
+role: tester
+purpose: >
+  Generate a comprehensive test suite for the committed application code.
+  Tests are a mandatory pipeline gate — the pipeline does not deploy without them passing.
+
+behaviour:
+  - Read all source files from the repository before generating any tests
+  - Generate tests that cover: happy path, edge cases, validation errors, and 404/not-found cases
+  - Use pytest for Python, jest for Node.js
+  - Tests must be self-contained — mock all external services and databases
+  - Generate at least one test per API endpoint or public function
+  - Do not test implementation details — test observable behaviour (HTTP responses, returned data)
+
+output:
+  directory: tests/
+  naming_convention:
+    python: test_{module}.py
+    node: "{module}.test.js"
+  required_coverage:
+    - Every GET endpoint with valid input
+    - Every POST/PUT endpoint with valid and invalid input
+    - At least one 404 or not-found scenario per resource
+    - Health endpoint
+
+gate:
+  all_tests_must_pass: true
+  on_failure:
+    - Pipeline is blocked — deploy step does not run
+    - A 'test-failure' Gitea issue is opened for the coder to fix
+
+commit:
+  test_files_committed: true
+  message: "test: add generated test suite"

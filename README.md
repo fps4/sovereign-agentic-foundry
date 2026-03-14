@@ -2,7 +2,17 @@
 
 An agentic platform that builds applications on sovereign (self-hosted) infrastructure. Users describe what they want via Telegram; an orchestration layer interprets intent and agents plan and execute the build.
 
-See [docs/poc.md](docs/poc.md) for the full design.
+The platform supports five app types out of the box:
+
+| Type | What it builds |
+|---|---|
+| **Form** | Collect or manage structured data — registrations, requests, records |
+| **Dashboard** | Display and visualise data — metrics, lists, live status |
+| **Workflow** | Move tasks through stages with assignments and notifications |
+| **Connector** | Headless backend linking two systems, no UI |
+| **Assistant** | RAG-powered chat and Q&A over your documents |
+
+See [docs/poc.md](docs/poc.md) for the full design, [docs/agent-pipeline.md](docs/agent-pipeline.md) for the agent pipeline, and [docs/app-types.md](docs/app-types.md) for type definitions and coverage.
 
 ## Prerequisites
 
@@ -76,11 +86,11 @@ DOCKER_HOST=ssh://ds1 docker compose ps
 
 All services should show `healthy` or `Up`.
 
-Open Telegram, find your bot, and send `/start`, then `/register`. Reply with the verification code. Once verified, describe what you want to build:
+Open Telegram, find your bot, and send `/start`. If `INVITE_CODE` is set, enter it when prompted — you'll be registered immediately. Once in, describe what you want to build:
 
 > *build me a REST API for managing users in Python*
 
-The bot scaffolds the project, pushes it to your private Gitea org, and replies with the live app URL (`http://{app-name}.APP_DOMAIN`). Woodpecker CI builds and deploys the container, attaching Traefik labels so it becomes publicly accessible immediately.
+The bot classifies intent, scaffolds the project, pushes it to your private Gitea org, and replies with the live app URL (`http://{app-name}.APP_DOMAIN`). Woodpecker CI builds and deploys the container, attaching Traefik labels so it becomes publicly accessible immediately.
 
 ---
 
@@ -89,16 +99,16 @@ The bot scaffolds the project, pushes it to your private Gitea org, and replies 
 | Service | Port | Description |
 |---|---|---|
 | `traefik` | 80 | Reverse proxy — routes `APP_DOMAIN` traffic to the orchestrator and all deployed apps |
-| `postgres` | — | Database for workflow state |
-| `ollama` | — | Local LLM inference |
-| `gitea` | 3000 | Self-hosted Git service |
-| `gitea-init` | — | One-shot init container: creates the Gitea admin user |
+| `postgres` | — | Database for user accounts, app registry, and Woodpecker CI state |
+| `ollama` | — | Local LLM inference (intent classification, code scaffolding, log summarisation) |
+| `gitea` | 3000 | Self-hosted Git — one private org per user, one repo per app |
+| `gitea-init` | — | One-shot init container: creates the Gitea admin user on first start |
 | `woodpecker-server` | 8080 | CI server and web UI |
-| `woodpecker-agent` | — | CI runner, executes pipelines via Docker; sets Traefik labels on deployed app containers |
-| `coder` | — | Coder agent: LLM scaffold → Gitea commit |
-| `monitor` | — | Log monitor agent: polls app containers, summarises errors, notifies owner via Telegram |
-| `orchestrator` | — | FastAPI + LangGraph, intent classification + chat |
-| `telegram-bot` | — | Telegram polling bot |
+| `woodpecker-agent` | — | CI runner — builds Docker images, deploys containers with Traefik labels |
+| `coder` | — | Coder agent: LLM scaffold → file generation → Gitea commit |
+| `monitor` | — | Log monitor agent: polls app containers, files Gitea issues, notifies owner via Telegram |
+| `orchestrator` | — | FastAPI + LangGraph: intent classification, chat, user registration, app registry |
+| `telegram-bot` | — | Telegram polling bot — the primary user interface |
 
 ## Useful commands
 
@@ -131,8 +141,9 @@ DOCKER_HOST=ssh://ds1 docker compose down
 | `WOODPECKER_GITEA_CLIENT` | Step 4 | — | Gitea OAuth2 client ID |
 | `WOODPECKER_GITEA_SECRET` | Step 4 | — | Gitea OAuth2 client secret |
 | `WOODPECKER_AGENT_SECRET` | No | `changeme` | Shared secret between Woodpecker server and agent |
+| `INVITE_CODE` | No | — | If set, users must supply this code to register. Leave unset to allow open registration |
 | `MONITOR_POLL_INTERVAL` | No | `60` | Seconds between log checks |
-| `MONITOR_COOLDOWN` | No | `600` | Seconds before re-alerting on the same app |
+| `MONITOR_COOLDOWN` | No | `600` | Seconds before re-checking the same container after an alert |
 | `MONITOR_LOG_LINES` | No | `50` | Log lines sampled per check |
 
 ## Build phases
@@ -142,5 +153,6 @@ DOCKER_HOST=ssh://ds1 docker compose down
 - **Phase 3** ✅ Coder agent: scaffolds repos, commits to Gitea, triggers Woodpecker CI
 
 ## Later for an extended POC
+
 - **Phase 4** Infra + review agents: OpenTofu provisioning, Semgrep/Trivy gate
 - **Phase 5** Observability + web hub: Prometheus, Grafana, Next.js dashboard

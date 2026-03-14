@@ -253,8 +253,6 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 "task_spec": {},
                 "org": org,
                 "run_id": run_id,
-                "repo_url": None,
-                "issue_url": None,
             }
         )
         log.info("chat.request", extra={"user_id": req.user_id, "intent": result["intent"], "message_preview": req.message[:60], "run_id": run_id})
@@ -262,6 +260,20 @@ async def chat(req: ChatRequest) -> ChatResponse:
         await db.append_message(req.user_id, "assistant", result["reply"])
         if result["intent"] == "build" and result.get("task_spec"):
             spec = result["task_spec"]
+
+            # Duplicate guard: if this app is already being built, don't start again.
+            existing = await db.get_app_by_name(int(req.user_id), spec["name"])
+            if existing and existing["status"] in ("queued", "provisioning"):
+                log.info("build.duplicate_skip", extra={
+                    "user_id": req.user_id, "app_name": spec["name"], "status": existing["status"],
+                })
+                return ChatResponse(
+                    reply=(
+                        f"*{spec['name']}* is already being built — I'll message you when it's ready. "
+                        f"Use /apps to check the current status."
+                    )
+                )
+
             app_id = await db.register_app(
                 telegram_id=int(req.user_id),
                 name=spec["name"],

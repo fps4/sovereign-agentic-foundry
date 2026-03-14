@@ -275,7 +275,7 @@ async def handle_invite_code(message: Message, state: FSMContext) -> None:
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPError as e:
-        log.error("Register request failed: %s", e)
+        log.error("Register request failed: %s", e, extra={"telegram_id": message.from_user.id, "error": str(e)})
         await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
 
@@ -296,7 +296,7 @@ async def handle_invite_code(message: Message, state: FSMContext) -> None:
             resp.raise_for_status()
             result = resp.json()
     except httpx.HTTPError as e:
-        log.error("Verify request failed: %s", e)
+        log.error("Verify request failed: %s", e, extra={"telegram_id": message.from_user.id, "error": str(e)})
         await state.clear()
         await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
@@ -329,7 +329,7 @@ async def handle_build_description(message: Message, state: FSMContext) -> None:
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPError as e:
-        log.error("Orchestrator request failed: %s", e)
+        log.error("Orchestrator request failed: %s", e, extra={"telegram_id": message.from_user.id, "error": str(e)})
         await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
     await message.answer(data["reply"], parse_mode="Markdown")
@@ -383,7 +383,7 @@ async def handle_fix_description(message: Message, state: FSMContext) -> None:
             resp.raise_for_status()
             result = resp.json()
     except httpx.HTTPError as e:
-        log.error("Issue creation failed: %s", e)
+        log.error("Issue creation failed: %s", e, extra={"telegram_id": message.from_user.id, "error": str(e)})
         await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
 
@@ -442,7 +442,7 @@ async def handle_delete_confirmation(message: Message, state: FSMContext) -> Non
                 return
             resp.raise_for_status()
     except httpx.HTTPError as e:
-        log.error("Delete app request failed: %s", e)
+        log.error("Delete app request failed: %s", e, extra={"telegram_id": message.from_user.id, "error": str(e)})
         await message.answer("Something went wrong on our end. Please try again in a moment.")
         return
 
@@ -472,7 +472,7 @@ async def handle_message(message: Message) -> None:
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPError as e:
-        log.error("Orchestrator request failed: %s", e)
+        log.error("Orchestrator request failed: %s", e, extra={"telegram_id": message.from_user.id, "error": str(e)})
         await message.answer(
             "Something went wrong on our end. Please try again in a moment."
         )

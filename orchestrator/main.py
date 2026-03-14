@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -131,6 +132,18 @@ class ReportIssueResponse(BaseModel):
     notified: bool
 
 
+class RunLogRequest(BaseModel):
+    run_id: str
+    agent: str
+    event: str
+    repo: str | None = None
+    task_ref: str | None = None
+    telegram_id: int | None = None
+    status: str = "ok"
+    duration_ms: int | None = None
+    details: dict | None = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _gitea_auth() -> tuple[str, str]:
@@ -228,6 +241,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         )
     try:
         org = user["gitea_org"] or ""
+        run_id = str(uuid4())
         history = await db.get_history(req.user_id)
         result = await graph.ainvoke(
             {
@@ -238,11 +252,12 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 "intent": "",
                 "task_spec": {},
                 "org": org,
+                "run_id": run_id,
                 "repo_url": None,
                 "issue_url": None,
             }
         )
-        log.info("chat.request", extra={"user_id": req.user_id, "intent": result["intent"], "message_preview": req.message[:60]})
+        log.info("chat.request", extra={"user_id": req.user_id, "intent": result["intent"], "message_preview": req.message[:60], "run_id": run_id})
         await db.append_message(req.user_id, "user", req.message)
         await db.append_message(req.user_id, "assistant", result["reply"])
         if result["intent"] == "build" and result.get("task_spec"):
@@ -253,7 +268,12 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 description=spec.get("description", ""),
                 app_type=spec.get("app_type", ""),
             )
-            log.info("build.queued", extra={"user_id": req.user_id, "app_id": app_id, "app_name": spec["name"], "org": org})
+            log.info("build.queued", extra={"user_id": req.user_id, "app_id": app_id, "app_name": spec["name"], "org": org, "run_id": run_id})
+            await db.log_run_step(
+                run_id=run_id, agent="orchestrator", event="pipeline.started",
+                repo=spec["name"], telegram_id=int(req.user_id),
+                details={"message_preview": req.message[:120]},
+            )
             asyncio.create_task(
                 run_build(
                     spec=spec,
@@ -261,6 +281,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
                     telegram_id=int(req.user_id),
                     bot_token=TELEGRAM_BOT_TOKEN,
                     app_id=app_id,
+                    run_id=run_id,
                 )
             )
         return ChatResponse(reply=result["reply"])
@@ -427,6 +448,36 @@ async def backfill_apps() -> dict:
                 inserted += 1
 
     return {"inserted": inserted, "skipped": skipped}
+
+
+# ── Agent run log ─────────────────────────────────────────────────────────────
+
+@app.post("/runs/log", status_code=204)
+async def log_run(req: RunLogRequest) -> None:
+    await db.log_run_step(
+        run_id=req.run_id,
+        agent=req.agent,
+        event=req.event,
+        repo=req.repo,
+        task_ref=req.task_ref,
+        telegram_id=req.telegram_id,
+        status=req.status,
+        duration_ms=req.duration_ms,
+        details=req.details,
+    )
+
+
+@app.get("/runs")
+async def get_runs(
+    repo: str | None = None,
+    run_id: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    rows = await db.get_run_steps(repo=repo, run_id=run_id, limit=limit)
+    for r in rows:
+        if r.get("created_at"):
+            r["created_at"] = r["created_at"].isoformat()
+    return rows
 
 
 @app.get("/health")

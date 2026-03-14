@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+from uuid import uuid4
 
 import docker
 import httpx
@@ -98,11 +99,12 @@ async def _check(container) -> None:
 
     _cooldowns[container.id] = now
     error_hash = _error_hash(logs)
+    run_id = f"monitor-{error_hash}"
 
     log.info(
         "Reporting issue for %s (breaking=%s hash=%s)",
         container.name, breaking, error_hash,
-        extra={"container": container.name, "error_hash": error_hash, "is_breaking": breaking},
+        extra={"container": container.name, "error_hash": error_hash, "is_breaking": breaking, "run_id": run_id},
     )
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -120,8 +122,23 @@ async def _check(container) -> None:
             log.info(
                 "report-issue response for %s: notified=%s issue_url=%s",
                 container.name, result.get("notified"), result.get("issue_url"),
-                extra={"container": container.name, "notified": result.get("notified"), "issue_url": result.get("issue_url")},
+                extra={"container": container.name, "notified": result.get("notified"),
+                       "issue_url": result.get("issue_url"), "run_id": run_id},
             )
+            # Log to agent_runs for correlation view
+            await client.post(f"{ORCHESTRATOR_URL}/runs/log", json={
+                "run_id": run_id,
+                "agent": "monitor",
+                "event": "monitor.issue_detected",
+                "repo": container.name,
+                "status": "error" if breaking else "ok",
+                "details": {
+                    "error_hash": error_hash,
+                    "is_breaking": breaking,
+                    "notified": result.get("notified"),
+                    "issue_url": result.get("issue_url"),
+                },
+            })
     except httpx.HTTPError as exc:
         log.error("Failed to report issue for %s: %s", container.name, exc)
 

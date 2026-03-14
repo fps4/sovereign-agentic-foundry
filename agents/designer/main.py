@@ -27,6 +27,23 @@ GITEA_URL = os.getenv("GITEA_URL", "http://gitea:3000")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "platform")
 GITEA_ADMIN_PASS = os.getenv("GITEA_ADMIN_PASS", "")
 STANDARDS_DIR = Path(os.getenv("STANDARDS_DIR", "/app/standards"))
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8000")
+
+
+async def _log(run_id: str, event: str, status: str = "ok",
+               repo: str | None = None, task_ref: str | None = None,
+               duration_ms: int | None = None, details: dict | None = None) -> None:
+    if not run_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"{ORCHESTRATOR_URL}/runs/log", json={
+                "run_id": run_id, "agent": "designer", "event": event,
+                "repo": repo, "task_ref": task_ref, "status": status,
+                "duration_ms": duration_ms, "details": details or {},
+            })
+    except Exception:
+        pass
 
 
 def _setup_logger(name: str) -> logging.Logger:
@@ -207,6 +224,7 @@ class DesignRequest(BaseModel):
     message: str
     history: list[dict] = []
     org: str = ""
+    run_id: str = ""
 
 
 class DesignResponse(BaseModel):
@@ -221,7 +239,11 @@ class DesignResponse(BaseModel):
 
 @app.post("/design", response_model=DesignResponse)
 async def design(req: DesignRequest) -> DesignResponse:
-    log.info("design.request", extra={"user_id": req.user_id, "history_len": len(req.history), "org": req.org})
+    import time as _time
+    _t0 = _time.monotonic()
+    log.info("design.request", extra={"user_id": req.user_id, "history_len": len(req.history), "org": req.org, "run_id": req.run_id})
+    await _log(req.run_id, "design.started", repo=None,
+               details={"user_id": req.user_id, "history_len": len(req.history)})
     llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, format="json")
 
     msgs = [SystemMessage(content=_SYSTEM_PROMPT)]
@@ -244,6 +266,8 @@ async def design(req: DesignRequest) -> DesignResponse:
 
     if not data.get("ready"):
         log.info("design.clarifying", extra={"user_id": req.user_id, "reply_preview": data.get("reply", "")[:80]})
+        await _log(req.run_id, "design.clarifying",
+                   details={"turn": len(req.history) + 1, "reply_preview": data.get("reply", "")[:80]})
         return DesignResponse(
             status="clarifying",
             reply=data.get("reply", "What else can you tell me about what you need?"),
@@ -257,6 +281,10 @@ async def design(req: DesignRequest) -> DesignResponse:
         )
 
     log.info("design.spec_ready", extra={"user_id": req.user_id, "app_name": spec["name"], "app_type": spec["app_type"], "stack": spec["stack"]})
+    await _log(req.run_id, "design.spec_ready", repo=spec["name"],
+               duration_ms=int((_time.monotonic() - _t0) * 1000),
+               details={"app_name": spec["name"], "app_type": spec["app_type"],
+                        "stack": spec["stack"], "requirements": spec.get("requirements", [])})
 
     # Create repo, commit DESIGN.md, open issue
     repo_url: str | None = None
@@ -265,13 +293,19 @@ async def design(req: DesignRequest) -> DesignResponse:
         try:
             repo_url = await _create_repo(spec["name"], spec["description"], req.org)
             log.info("design.repo_created", extra={"org": req.org, "repo": spec["name"], "repo_url": repo_url})
+            await _log(req.run_id, "design.repo_created", repo=spec["name"],
+                       details={"repo_url": repo_url})
             issue_body = _build_issue_body(spec)
             issue_url = await _create_issue(req.org, spec["name"], f"feat: implement {spec['name']}", issue_body)
             log.info("design.issue_created", extra={"org": req.org, "repo": spec["name"], "issue_url": issue_url})
+            await _log(req.run_id, "design.issue_created", repo=spec["name"],
+                       task_ref=issue_url, details={"issue_url": issue_url})
             design_md = _build_design_md(spec, issue_url)
             await _commit_file(req.org, spec["name"], "DESIGN.md", design_md, "docs: add design specification")
         except Exception as exc:
             log.error("design.error", extra={"user_id": req.user_id, "error": str(exc)})
+            await _log(req.run_id, "design.error", repo=spec.get("name"), status="error",
+                       details={"error": str(exc)})
             return DesignResponse(
                 status="clarifying",
                 reply=f"Something went wrong setting up the repo: {exc}. Please try again.",

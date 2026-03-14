@@ -59,6 +59,23 @@ async def init_pool() -> None:
             UNIQUE (app_id, error_hash)
         )
     """)
+    await _pool.execute("""
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            id          BIGSERIAL PRIMARY KEY,
+            run_id      TEXT        NOT NULL,
+            agent       TEXT        NOT NULL,
+            repo        TEXT,
+            task_ref    TEXT,
+            telegram_id BIGINT,
+            event       TEXT        NOT NULL,
+            status      TEXT        NOT NULL DEFAULT 'ok',
+            duration_ms INT,
+            details     JSONB,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    await _pool.execute("CREATE INDEX IF NOT EXISTS agent_runs_run_id ON agent_runs (run_id)")
+    await _pool.execute("CREATE INDEX IF NOT EXISTS agent_runs_repo ON agent_runs (repo, created_at DESC)")
 
 
 async def close_pool() -> None:
@@ -257,3 +274,52 @@ async def count_open_issues(app_id: int) -> int:
         "SELECT COUNT(*) AS n FROM app_issues WHERE app_id = $1", app_id
     )
     return row["n"] if row else 0
+
+
+# ── Agent run log ─────────────────────────────────────────────────────────────
+
+async def log_run_step(
+    run_id: str,
+    agent: str,
+    event: str,
+    repo: str | None = None,
+    task_ref: str | None = None,
+    telegram_id: int | None = None,
+    status: str = "ok",
+    duration_ms: int | None = None,
+    details: dict | None = None,
+) -> None:
+    import json as _json
+    await _pool.execute(
+        """
+        INSERT INTO agent_runs
+            (run_id, agent, repo, task_ref, telegram_id, event, status, duration_ms, details)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        """,
+        run_id, agent, repo, task_ref, telegram_id,
+        event, status, duration_ms,
+        _json.dumps(details) if details else None,
+    )
+
+
+async def get_run_steps(
+    repo: str | None = None,
+    run_id: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    if run_id:
+        rows = await _pool.fetch(
+            "SELECT * FROM agent_runs WHERE run_id = $1 ORDER BY created_at LIMIT $2",
+            run_id, limit,
+        )
+    elif repo:
+        rows = await _pool.fetch(
+            "SELECT * FROM agent_runs WHERE repo = $1 ORDER BY created_at DESC LIMIT $2",
+            repo, limit,
+        )
+    else:
+        rows = await _pool.fetch(
+            "SELECT * FROM agent_runs ORDER BY created_at DESC LIMIT $1", limit
+        )
+    return [dict(r) for r in rows]
+

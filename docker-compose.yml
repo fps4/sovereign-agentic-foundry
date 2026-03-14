@@ -144,6 +144,7 @@ services:
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
       GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
+      ORCHESTRATOR_URL: http://orchestrator:8000
     depends_on:
       gitea-init:
         condition: service_completed_successfully
@@ -167,6 +168,7 @@ services:
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
       GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
+      ORCHESTRATOR_URL: http://orchestrator:8000
     depends_on:
       gitea-init:
         condition: service_completed_successfully
@@ -189,6 +191,7 @@ services:
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
       GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
       APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      ORCHESTRATOR_URL: http://orchestrator:8000
     depends_on:
       gitea-init:
         condition: service_completed_successfully
@@ -293,6 +296,7 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_LOGIN_FORM: "false"
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
       - grafana_data:/var/lib/grafana
     depends_on:

@@ -28,6 +28,23 @@ GITEA_URL = os.getenv("GITEA_URL", "http://gitea:3000")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "platform")
 GITEA_ADMIN_PASS = os.getenv("GITEA_ADMIN_PASS", "")
 STANDARDS_DIR = Path(os.getenv("STANDARDS_DIR", "/app/standards"))
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8000")
+
+
+async def _log(run_id: str, event: str, status: str = "ok",
+               repo: str | None = None, duration_ms: int | None = None,
+               details: dict | None = None) -> None:
+    if not run_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"{ORCHESTRATOR_URL}/runs/log", json={
+                "run_id": run_id, "agent": "tester", "event": event,
+                "repo": repo, "status": status,
+                "duration_ms": duration_ms, "details": details or {},
+            })
+    except Exception:
+        pass
 
 
 def _setup_logger(name: str) -> logging.Logger:
@@ -168,6 +185,7 @@ class GenerateTestsRequest(BaseModel):
     repo: str
     org: str
     branch: str = "main"
+    run_id: str = ""  # optional — CI step may pass one
 
 
 class GenerateTestsResponse(BaseModel):
@@ -179,12 +197,19 @@ class GenerateTestsResponse(BaseModel):
 
 @app.post("/generate-tests", response_model=GenerateTestsResponse)
 async def generate_tests(req: GenerateTestsRequest) -> GenerateTestsResponse:
-    log.info("tests.request", extra={"repo": req.repo, "org": req.org})
+    import time as _time
+    from uuid import uuid4 as _uuid4
+    _t0 = _time.monotonic()
+    run_id = req.run_id or f"tester-{str(_uuid4())[:8]}"
+    log.info("tests.request", extra={"repo": req.repo, "org": req.org, "run_id": run_id})
+    await _log(run_id, "tests.started", repo=req.repo, details={"org": req.org})
     source_files = await _fetch_source_files(req.org, req.repo)
-    log.info("tests.files_fetched", extra={"repo": req.repo, "count": len(source_files)})
     if not source_files:
         log.warning("tests.no_source_files", extra={"repo": req.repo, "org": req.org})
+        await _log(run_id, "tests.no_source_files", repo=req.repo, status="error")
         raise HTTPException(status_code=422, detail="No source files found in repo")
+    log.info("tests.files_fetched", extra={"repo": req.repo, "count": len(source_files), "run_id": run_id})
+    await _log(run_id, "tests.files_fetched", repo=req.repo, details={"count": len(source_files)})
     source_block = "\n\n".join(
         f"# File: {f['path']}\n{f['content']}" for f in source_files
     )
@@ -201,12 +226,14 @@ async def generate_tests(req: GenerateTestsRequest) -> GenerateTestsResponse:
         test_files = data.get("files", [])
         if not (test_files and all("path" in f and "content" in f for f in test_files)):
             log.warning("tests.fallback_minimal", extra={"repo": req.repo, "reason": "invalid_llm_output"})
+            await _log(run_id, "tests.fallback_minimal", repo=req.repo, details={"reason": "invalid_llm_output"})
             test_files = _minimal_tests(req.repo)
     except (json.JSONDecodeError, AttributeError, TypeError):
         log.warning("tests.fallback_minimal", extra={"repo": req.repo, "reason": "json_parse_error"})
+        await _log(run_id, "tests.fallback_minimal", repo=req.repo, details={"reason": "json_parse_error"})
         test_files = _minimal_tests(req.repo)
 
-    log.info("tests.generated", extra={"repo": req.repo, "file_count": len(test_files), "files": [f["path"] for f in test_files]})
+    log.info("tests.generated", extra={"repo": req.repo, "file_count": len(test_files), "files": [f["path"] for f in test_files], "run_id": run_id})
 
     # Ensure tests/__init__.py exists
     paths = {f["path"] for f in test_files}
@@ -220,7 +247,11 @@ async def generate_tests(req: GenerateTestsRequest) -> GenerateTestsResponse:
         except Exception:
             pass
 
-    log.info("tests.committed", extra={"repo": req.repo, "files": [f["path"] for f in test_files]})
+    duration_ms = int((_time.monotonic() - _t0) * 1000)
+    test_paths = [f["path"] for f in test_files]
+    log.info("tests.committed", extra={"repo": req.repo, "files": test_paths, "run_id": run_id})
+    await _log(run_id, "tests.committed", repo=req.repo, status="ok",
+               duration_ms=duration_ms, details={"files": test_paths})
     return GenerateTestsResponse(
         files=test_files,
         summary=f"{len([f for f in test_files if f['path'].endswith('.py') and not f['path'].endswith('__init__.py')])} test file(s) generated for {req.repo}",

@@ -73,6 +73,7 @@ class State(TypedDict):
     intent: str
     task_spec: dict
     org: str
+    run_id: str
     repo_url: str | None
     issue_url: str | None
 
@@ -117,6 +118,7 @@ def design(state: State) -> State:
                     "message": state["message"],
                     "history": state.get("history", []),
                     "org": state["org"],
+                    "run_id": state.get("run_id", ""),
                 },
             )
             resp.raise_for_status()
@@ -162,9 +164,10 @@ graph = workflow.compile()
 
 # ── Background build ──────────────────────────────────────────────────────────
 
-async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_id: int) -> None:
+async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_id: int, run_id: str = "") -> None:
     """Call the coder agent and push the result to Telegram. Runs as a background task."""
     name = spec.get("name", "your app")
+    _t0 = asyncio.get_event_loop().time()
 
     async def _telegram(text: str) -> None:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -173,22 +176,32 @@ async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_
                 json={"chat_id": telegram_id, "text": text, "parse_mode": "Markdown"},
             )
 
-    from db import update_app_status
-    log.info("build.provisioning", extra={"app_id": app_id, "app_name": name, "org": org})
+    from db import update_app_status, log_run_step
+    log.info("build.provisioning", extra={"app_id": app_id, "app_name": name, "org": org, "run_id": run_id})
     await update_app_status(app_id, "provisioning")
+    if run_id:
+        await log_run_step(run_id=run_id, agent="orchestrator", event="build.provisioning",
+                           repo=name, telegram_id=telegram_id,
+                           details={"stack": spec.get("stack"), "app_type": spec.get("app_type")})
 
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(f"{CODER_URL}/build", json={**spec, "org": org})
+            resp = await client.post(f"{CODER_URL}/build", json={**spec, "org": org, "run_id": run_id})
             resp.raise_for_status()
             data = resp.json()
 
+        duration_ms = int((asyncio.get_event_loop().time() - _t0) * 1000)
         await update_app_status(
             app_id, "active",
             repo_url=data["repo_url"],
             app_url=data["app_url"],
         )
-        log.info("build.active", extra={"app_id": app_id, "app_name": name, "repo_url": data["repo_url"], "app_url": data["app_url"]})
+        log.info("build.active", extra={"app_id": app_id, "app_name": name, "repo_url": data["repo_url"], "app_url": data["app_url"], "run_id": run_id})
+        if run_id:
+            await log_run_step(run_id=run_id, agent="orchestrator", event="build.active",
+                               repo=name, telegram_id=telegram_id, status="ok",
+                               duration_ms=duration_ms,
+                               details={"repo_url": data["repo_url"], "app_url": data["app_url"]})
         await _telegram(
             f"*{name}* is ready!\n\n"
             f"Open it: {data['app_url']}\n"
@@ -196,8 +209,13 @@ async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_
             f"It updates automatically whenever you push to main."
         )
     except Exception as exc:
-        log.error("build.failed", extra={"app_id": app_id, "app_name": name, "error": str(exc)})
+        duration_ms = int((asyncio.get_event_loop().time() - _t0) * 1000)
+        log.error("build.failed", extra={"app_id": app_id, "app_name": name, "error": str(exc), "run_id": run_id})
         await update_app_status(app_id, "failed", error_detail=str(exc))
+        if run_id:
+            await log_run_step(run_id=run_id, agent="orchestrator", event="build.failed",
+                               repo=name, telegram_id=telegram_id, status="error",
+                               duration_ms=duration_ms, details={"error": str(exc)})
         await _telegram(
             f"Build failed for *{name}*.\n\n"
             f"Error: {exc}\n\n"

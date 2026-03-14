@@ -253,8 +253,8 @@ sovereign-agentic-foundry/
 | ✅ Done | Tester agent (LLM test generation as mandatory CI step) |
 | ✅ Done | App registry, status tracking, monitor → report-issue deduplication |
 | ✅ Done | Automatic Woodpecker repo activation (no manual setup) |
-| **Next** | Wiki app type — collaborative document editing |
-| **Next** | Compliance agent — policy and standards review gate before deploy |
+| **Next** | Assess adoption of a separate agentic workflow service |
+| **Next** | Add compliance agent — policy and standards review gate before deploy |
 | **Next** | Improved monitor issue reporting — smarter deduplication and root-cause hints |
 | **Later** | App lifecycle management — data retention, archival, breaking-change handling |
 | **Later** | /examples — platform-hosted showcase apps by category |

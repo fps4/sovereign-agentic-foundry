@@ -33,4 +33,4 @@ storage_config:
     directory: /tmp/loki/chunks
 
 pattern_ingester:
-  enabled: true
+  enabled: false

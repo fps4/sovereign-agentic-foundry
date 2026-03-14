@@ -66,9 +66,16 @@ class PostgresStorage(BaseStorage):
         row = await self._pool.fetchrow(
             "SELECT data FROM fsm_state WHERE key = $1", self._key(key)
         )
-        if row and row["data"]:
-            return dict(row["data"])
-        return {}
+        if not row or row["data"] is None:
+            return {}
+        data = row["data"]
+        # asyncpg may return JSONB as a raw string rather than a decoded dict
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (json.JSONDecodeError, ValueError):
+                return {}
+        return dict(data) if isinstance(data, dict) else {}
 
     async def close(self) -> None:
         await self._pool.close()

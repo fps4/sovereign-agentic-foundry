@@ -391,28 +391,33 @@ async def create_issue(req: IssueRequest) -> IssueResponse:
     return IssueResponse(issue_url=issue_url)
 
 
+async def _stop_app_container(name: str) -> None:
+    """Stop and remove the running app container via the Docker socket."""
+    try:
+        transport = httpx.AsyncHTTPTransport(uds="/var/run/docker.sock")
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://docker", timeout=15.0
+        ) as client:
+            await client.delete(f"/v1.44/containers/{name}", params={"force": "true"})
+    except Exception as exc:
+        log.warning("delete.container_stop_failed", extra={"app_name": name, "error": str(exc)})
+
+
 @app.post("/delete-app", response_model=DeleteAppResponse)
 async def delete_app(req: DeleteAppRequest) -> DeleteAppResponse:
     user = await db.get_user(req.telegram_id)
     if not user or not user["verified"]:
         raise HTTPException(status_code=403, detail="not_registered")
 
-    org = user["gitea_org"]
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.delete(
-                f"{GITEA_URL}/api/v1/repos/{org}/{req.repo_name}",
-                auth=_gitea_auth(),
-            )
-            if resp.status_code == 404:
-                raise HTTPException(status_code=404, detail="app_not_found")
-            resp.raise_for_status()
-    except HTTPException:
-        raise
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Gitea error: {e}")
+    app_record = await db.get_app_by_name(req.telegram_id, req.repo_name)
+    if not app_record or app_record["status"] == "deleted":
+        raise HTTPException(status_code=404, detail="app_not_found")
+
+    # Stop the running container (best-effort — may already be stopped)
+    await _stop_app_container(req.repo_name)
 
     await db.soft_delete_app(req.telegram_id, req.repo_name)
+    log.info("app.deleted", extra={"telegram_id": req.telegram_id, "app_name": req.repo_name})
     return DeleteAppResponse(success=True)
 
 

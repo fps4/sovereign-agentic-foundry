@@ -213,6 +213,7 @@ services:
     build: ./orchestrator
     volumes:
       - ./standards:/app/standards:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}

@@ -321,7 +321,7 @@ async def handle_build_description(message: Message, state: FSMContext) -> None:
     await state.clear()
     await bot.send_chat_action(message.chat.id, "typing")
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 f"{ORCHESTRATOR_URL}/chat",
                 json={"user_id": str(message.from_user.id), "message": message.text},
@@ -464,7 +464,7 @@ async def handle_message(message: Message) -> None:
     await bot.send_chat_action(message.chat.id, "typing")
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 f"{ORCHESTRATOR_URL}/chat",
                 json={"user_id": str(message.from_user.id), "message": message.text},

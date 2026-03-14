@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from pythonjsonlogger.jsonlogger import JsonFormatter
 
 import db
-from workflow import graph, run_build
+from workflow import run_build
 
 
 def _setup_logger(name: str) -> logging.Logger:
@@ -244,33 +244,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         org = user["gitea_org"] or ""
         run_id = str(uuid4())
         history = await db.get_history(req.user_id)
-
-        # ── Designer flow: active design session or detected build intent ──────
-        in_design = bool(user.get("design_mode"))
-        if not in_design:
-            # Run the classify step to detect build intent before deciding
-            result = await graph.ainvoke(
-                {
-                    "user_id": req.user_id,
-                    "message": req.message,
-                    "history": history,
-                    "reply": "",
-                    "intent": "",
-                    "task_spec": {},
-                    "org": org,
-                    "run_id": run_id,
-                }
-            )
-            in_design = result["intent"] in ("build", "clarify_type")
-
-        if in_design:
-            return await _handle_design(req, user, org, run_id, history)
-
-        # ── Normal chat response ───────────────────────────────────────────────
-        log.info("chat.request", extra={"user_id": req.user_id, "intent": result["intent"], "message_preview": req.message[:60], "run_id": run_id})
-        await db.append_message(req.user_id, "user", req.message)
-        await db.append_message(req.user_id, "assistant", result["reply"])
-        return ChatResponse(reply=result["reply"])
+        return await _handle_design(req, user, org, run_id, history)
     except Exception as e:
         log.error("chat.error", extra={"user_id": req.user_id, "error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
@@ -283,8 +257,8 @@ async def _handle_design(
     run_id: str,
     history: list,
 ) -> ChatResponse:
-    """Route message through the designer agent for clarify → spec → build flow."""
-    log.info("design.request", extra={"user_id": req.user_id, "run_id": run_id})
+    """Route every message through the designer agent — the single front door."""
+    log.info("chat.request", extra={"user_id": req.user_id, "run_id": run_id, "message_preview": req.message[:60]})
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
@@ -300,22 +274,19 @@ async def _handle_design(
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPError as exc:
-        log.error("design.error", extra={"user_id": req.user_id, "error": str(exc)})
-        await db.set_design_mode(int(req.user_id), False)
+        log.error("chat.designer_error", extra={"user_id": req.user_id, "error": str(exc)})
         return ChatResponse(
-            reply="Something went wrong reaching the design service. Please try again."
+            reply="Something went wrong on our end. Please try again in a moment."
         )
 
     await db.append_message(req.user_id, "user", req.message)
     await db.append_message(req.user_id, "assistant", data["reply"])
 
     if data["status"] == "clarifying":
-        await db.set_design_mode(int(req.user_id), True)
-        log.info("design.clarifying", extra={"user_id": req.user_id, "run_id": run_id})
+        log.info("chat.clarifying", extra={"user_id": req.user_id, "run_id": run_id})
         return ChatResponse(reply=data["reply"])
 
-    # Designer is ready — clear design mode and kick off the build
-    await db.set_design_mode(int(req.user_id), False)
+    # Designer produced a complete spec — kick off the build
     spec = data.get("spec", {})
     if not spec:
         return ChatResponse(reply=data["reply"])

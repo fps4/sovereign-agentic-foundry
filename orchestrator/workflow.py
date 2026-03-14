@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import TypedDict
 
@@ -8,6 +9,7 @@ import httpx
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
+from pythonjsonlogger.jsonlogger import JsonFormatter
 
 from standards import load_standards
 
@@ -15,6 +17,20 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 CODER_URL = os.getenv("CODER_URL", "http://coder:8001")
 DESIGNER_URL = os.getenv("DESIGNER_URL", "http://designer:8003")
+
+
+def _setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+log = _setup_logger("workflow")
 
 _STANDARDS_BLOCK = load_standards()
 
@@ -158,6 +174,7 @@ async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_
             )
 
     from db import update_app_status
+    log.info("build.provisioning", extra={"app_id": app_id, "app_name": name, "org": org})
     await update_app_status(app_id, "provisioning")
 
     try:
@@ -171,6 +188,7 @@ async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_
             repo_url=data["repo_url"],
             app_url=data["app_url"],
         )
+        log.info("build.active", extra={"app_id": app_id, "app_name": name, "repo_url": data["repo_url"], "app_url": data["app_url"]})
         await _telegram(
             f"*{name}* is ready!\n\n"
             f"Open it: {data['app_url']}\n"
@@ -178,6 +196,7 @@ async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_
             f"It updates automatically whenever you push to main."
         )
     except Exception as exc:
+        log.error("build.failed", extra={"app_id": app_id, "app_name": name, "error": str(exc)})
         await update_app_status(app_id, "failed", error_detail=str(exc))
         await _telegram(
             f"Build failed for *{name}*.\n\n"
@@ -360,6 +379,7 @@ async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_
             )
 
     from db import update_app_status
+    log.info("build.provisioning", extra={"app_id": app_id, "app_name": name})
     await update_app_status(app_id, "provisioning")
 
     try:
@@ -373,6 +393,7 @@ async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_
             repo_url=data["repo_url"],
             app_url=data["app_url"],
         )
+        log.info("build.active", extra={"app_id": app_id, "app_name": name, "repo_url": data["repo_url"], "app_url": data["app_url"]})
         await _telegram(
             f"*{name}* is ready!\n\n"
             f"Open it: {data['app_url']}\n"
@@ -380,6 +401,7 @@ async def run_build(spec: dict, org: str, telegram_id: int, bot_token: str, app_
             f"It updates automatically whenever you push to main."
         )
     except Exception as exc:
+        log.error("build.failed", extra={"app_id": app_id, "app_name": name, "error": str(exc)})
         await update_app_status(app_id, "failed", error_detail=str(exc))
         await _telegram(
             f"Build failed for *{name}*.\n\n"

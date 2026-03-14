@@ -6,6 +6,7 @@ import os
 
 import httpx
 from aiogram import Bot, Dispatcher, Router
+from pythonjsonlogger.jsonlogger import JsonFormatter
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,8 +15,19 @@ from aiogram.types import Message
 
 from storage import PostgresStorage
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
+
+def _setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+log = _setup_logger("telegram-bot")
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8000")
@@ -470,7 +482,7 @@ async def handle_message(message: Message) -> None:
 
 
 async def main() -> None:
-    log.info("Starting Telegram bot (polling)...")
+    log.info("Starting Telegram bot (polling)...", extra={"storage": "postgres" if DB_URL else "memory"})
     if DB_URL:
         log.info("Using PostgresStorage for FSM state persistence")
         storage = await PostgresStorage.create(DB_URL)

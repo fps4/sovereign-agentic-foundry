@@ -8,15 +8,19 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from pathlib import Path
 
 import httpx
+import logging
 import yaml
 from fastapi import FastAPI, HTTPException
+from pythonjsonlogger.jsonlogger import JsonFormatter
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
+from pythonjsonlogger.jsonlogger import JsonFormatter
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
@@ -24,6 +28,32 @@ GITEA_URL = os.getenv("GITEA_URL", "http://gitea:3000")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "platform")
 GITEA_ADMIN_PASS = os.getenv("GITEA_ADMIN_PASS", "")
 STANDARDS_DIR = Path(os.getenv("STANDARDS_DIR", "/app/standards"))
+
+
+def _setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+log = _setup_logger("tester")
+def _setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+log = _setup_logger("tester")
 
 app = FastAPI(title="Tester Agent")
 
@@ -149,10 +179,12 @@ class GenerateTestsResponse(BaseModel):
 
 @app.post("/generate-tests", response_model=GenerateTestsResponse)
 async def generate_tests(req: GenerateTestsRequest) -> GenerateTestsResponse:
+    log.info("tests.request", extra={"repo": req.repo, "org": req.org})
     source_files = await _fetch_source_files(req.org, req.repo)
+    log.info("tests.files_fetched", extra={"repo": req.repo, "count": len(source_files)})
     if not source_files:
+        log.warning("tests.no_source_files", extra={"repo": req.repo, "org": req.org})
         raise HTTPException(status_code=422, detail="No source files found in repo")
-
     source_block = "\n\n".join(
         f"# File: {f['path']}\n{f['content']}" for f in source_files
     )
@@ -168,9 +200,13 @@ async def generate_tests(req: GenerateTestsRequest) -> GenerateTestsResponse:
         data = json.loads(result.content)
         test_files = data.get("files", [])
         if not (test_files and all("path" in f and "content" in f for f in test_files)):
+            log.warning("tests.fallback_minimal", extra={"repo": req.repo, "reason": "invalid_llm_output"})
             test_files = _minimal_tests(req.repo)
     except (json.JSONDecodeError, AttributeError, TypeError):
+        log.warning("tests.fallback_minimal", extra={"repo": req.repo, "reason": "json_parse_error"})
         test_files = _minimal_tests(req.repo)
+
+    log.info("tests.generated", extra={"repo": req.repo, "file_count": len(test_files), "files": [f["path"] for f in test_files]})
 
     # Ensure tests/__init__.py exists
     paths = {f["path"] for f in test_files}
@@ -184,6 +220,7 @@ async def generate_tests(req: GenerateTestsRequest) -> GenerateTestsResponse:
         except Exception:
             pass
 
+    log.info("tests.committed", extra={"repo": req.repo, "files": [f["path"] for f in test_files]})
     return GenerateTestsResponse(
         files=test_files,
         summary=f"{len([f for f in test_files if f['path'].endswith('.py') and not f['path'].endswith('__init__.py')])} test file(s) generated for {req.repo}",

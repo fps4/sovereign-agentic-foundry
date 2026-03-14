@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -7,11 +9,24 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-
-import asyncio
+from pythonjsonlogger.jsonlogger import JsonFormatter
 
 import db
 from workflow import graph, run_build
+
+
+def _setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+log = _setup_logger("orchestrator")
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
@@ -31,6 +46,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_pool()
+    log.info("startup")
     yield
     await db.close_pool()
 
@@ -170,6 +186,7 @@ async def _telegram_notify(telegram_id: int, text: str) -> None:
 
 @app.post("/register", response_model=RegisterResponse)
 async def register(req: RegisterRequest) -> RegisterResponse:
+    log.info("user.register", extra={"telegram_id": req.telegram_id})
     user = await db.get_user(req.telegram_id)
     if user and user["verified"]:
         return RegisterResponse(
@@ -198,6 +215,7 @@ async def verify(req: VerifyRequest) -> VerifyResponse:
         raise HTTPException(status_code=502, detail=f"Gitea error: {e}")
 
     await db.verify_user(req.telegram_id, org)
+    log.info("user.verify", extra={"telegram_id": req.telegram_id, "org": org})
     return VerifyResponse(success=True, message="verified")
 
 
@@ -224,6 +242,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 "issue_url": None,
             }
         )
+        log.info("chat.request", extra={"user_id": req.user_id, "intent": result["intent"], "message_preview": req.message[:60]})
         await db.append_message(req.user_id, "user", req.message)
         await db.append_message(req.user_id, "assistant", result["reply"])
         if result["intent"] == "build" and result.get("task_spec"):
@@ -234,6 +253,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 description=spec.get("description", ""),
                 app_type=spec.get("app_type", ""),
             )
+            log.info("build.queued", extra={"user_id": req.user_id, "app_id": app_id, "app_name": spec["name"], "org": org})
             asyncio.create_task(
                 run_build(
                     spec=spec,
@@ -245,6 +265,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
             )
         return ChatResponse(reply=result["reply"])
     except Exception as e:
+        log.error("chat.error", extra={"user_id": req.user_id, "error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -318,6 +339,7 @@ async def report_issue(app_name: str, req: ReportIssueRequest) -> ReportIssueRes
     # Dedup check — if we've seen this exact error before, stay silent
     existing = await db.get_app_issue(app_record["id"], req.error_hash)
     if existing is not None:
+        log.info("issue.dedup_skip", extra={"app_name": app_name, "error_hash": req.error_hash})
         return ReportIssueResponse(issue_url=existing, notified=False)
 
     user = await db.get_user(req.telegram_id)
@@ -357,6 +379,7 @@ async def report_issue(app_name: str, req: ReportIssueRequest) -> ReportIssueRes
     except Exception:
         pass
 
+    log.info("issue.reported", extra={"app_name": app_name, "error_hash": req.error_hash, "issue_url": issue_url, "notified": notified})
     return ReportIssueResponse(issue_url=issue_url, notified=notified)
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi import FastAPI
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel
+from pythonjsonlogger.jsonlogger import JsonFormatter
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
@@ -26,6 +28,19 @@ GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "platform")
 GITEA_ADMIN_PASS = os.getenv("GITEA_ADMIN_PASS", "")
 STANDARDS_DIR = Path(os.getenv("STANDARDS_DIR", "/app/standards"))
 
+
+def _setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+log = _setup_logger("designer")
 app = FastAPI(title="Designer Agent")
 
 
@@ -206,6 +221,7 @@ class DesignResponse(BaseModel):
 
 @app.post("/design", response_model=DesignResponse)
 async def design(req: DesignRequest) -> DesignResponse:
+    log.info("design.request", extra={"user_id": req.user_id, "history_len": len(req.history), "org": req.org})
     llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, format="json")
 
     msgs = [SystemMessage(content=_SYSTEM_PROMPT)]
@@ -227,6 +243,7 @@ async def design(req: DesignRequest) -> DesignResponse:
         )
 
     if not data.get("ready"):
+        log.info("design.clarifying", extra={"user_id": req.user_id, "reply_preview": data.get("reply", "")[:80]})
         return DesignResponse(
             status="clarifying",
             reply=data.get("reply", "What else can you tell me about what you need?"),
@@ -239,17 +256,22 @@ async def design(req: DesignRequest) -> DesignResponse:
             reply="I need a bit more detail — what should the app be called and what should it do?",
         )
 
+    log.info("design.spec_ready", extra={"user_id": req.user_id, "app_name": spec["name"], "app_type": spec["app_type"], "stack": spec["stack"]})
+
     # Create repo, commit DESIGN.md, open issue
     repo_url: str | None = None
     issue_url: str | None = None
     if req.org:
         try:
             repo_url = await _create_repo(spec["name"], spec["description"], req.org)
+            log.info("design.repo_created", extra={"org": req.org, "repo": spec["name"], "repo_url": repo_url})
             issue_body = _build_issue_body(spec)
             issue_url = await _create_issue(req.org, spec["name"], f"feat: implement {spec['name']}", issue_body)
+            log.info("design.issue_created", extra={"org": req.org, "repo": spec["name"], "issue_url": issue_url})
             design_md = _build_design_md(spec, issue_url)
             await _commit_file(req.org, spec["name"], "DESIGN.md", design_md, "docs: add design specification")
         except Exception as exc:
+            log.error("design.error", extra={"user_id": req.user_id, "error": str(exc)})
             return DesignResponse(
                 status="clarifying",
                 reply=f"Something went wrong setting up the repo: {exc}. Please try again.",

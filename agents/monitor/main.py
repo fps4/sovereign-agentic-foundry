@@ -15,9 +15,14 @@ import time
 
 import docker
 import httpx
+from pythonjsonlogger.jsonlogger import JsonFormatter
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
+_handler = logging.StreamHandler()
+_handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+logging.root.handlers = []
+logging.root.addHandler(_handler)
+logging.root.setLevel(logging.INFO)
+log = logging.getLogger("monitor")
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8000")
 POLL_INTERVAL = int(os.getenv("MONITOR_POLL_INTERVAL", "60"))
@@ -97,6 +102,7 @@ async def _check(container) -> None:
     log.info(
         "Reporting issue for %s (breaking=%s hash=%s)",
         container.name, breaking, error_hash,
+        extra={"container": container.name, "error_hash": error_hash, "is_breaking": breaking},
     )
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -114,6 +120,7 @@ async def _check(container) -> None:
             log.info(
                 "report-issue response for %s: notified=%s issue_url=%s",
                 container.name, result.get("notified"), result.get("issue_url"),
+                extra={"container": container.name, "notified": result.get("notified"), "issue_url": result.get("issue_url")},
             )
     except httpx.HTTPError as exc:
         log.error("Failed to report issue for %s: %s", container.name, exc)
@@ -127,7 +134,7 @@ async def monitor_loop() -> None:
     while True:
         try:
             containers = await _platform_containers_async()
-            log.debug("Checking %d platform container(s)", len(containers))
+            log.debug("Checking %d platform container(s)", len(containers), extra={"container_count": len(containers)})
             for container in containers:
                 await _check(container)
         except Exception as exc:

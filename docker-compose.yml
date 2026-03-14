@@ -265,6 +265,46 @@ services:
     networks:
       - platform
 
+  loki:
+    build: ./infra/loki
+    volumes:
+      - loki_data:/tmp/loki
+    networks:
+      - platform
+
+  promtail:
+    build: ./infra/promtail
+    environment:
+      PROMTAIL_HOSTNAME: ${HOSTNAME:-ds1}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+    networks:
+      - platform
+
+  grafana:
+    build: ./infra/grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - loki
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${APP_DOMAIN:-localhost}`)"
+      - "traefik.http.routers.grafana.entrypoints=web"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    networks:
+      - platform
+
 networks:
   platform:
     driver: bridge
@@ -273,3 +313,6 @@ volumes:
   db_data:
   ollama_data:
   gitea_data:
+  loki_data:
+  grafana_data:
+

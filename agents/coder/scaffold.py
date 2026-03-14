@@ -7,6 +7,7 @@ parsed — this keeps the agent working even with smaller models.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 
@@ -99,6 +100,19 @@ def _inject_domain(files: list[dict]) -> list[dict]:
 
 
 def _woodpecker_yml(name: str, image: str, test_cmd: str) -> str:
+    # Encode the test-generator script as base64 to avoid YAML indentation issues
+    gen_script = (
+        "import httpx, json, os\n"
+        "from pathlib import Path\n"
+        "r = httpx.post(os.environ['TESTER_URL'] + '/generate-tests',\n"
+        "               json={'repo': os.environ['CI_REPO_NAME'], 'org': os.environ['CI_REPO_OWNER']},\n"
+        "               timeout=httpx.Timeout(connect=10, read=900, write=10, pool=10))\n"
+        "r.raise_for_status()\n"
+        "for f in r.json()['files']:\n"
+        "    p = Path(f['path']); p.parent.mkdir(parents=True, exist_ok=True); p.write_text(f['content'])\n"
+        "print(r.json()['summary'])\n"
+    )
+    gen_b64 = base64.b64encode(gen_script.encode()).decode()
     return (
         "steps:\n"
         "  - name: generate-tests\n"
@@ -109,22 +123,11 @@ def _woodpecker_yml(name: str, image: str, test_cmd: str) -> str:
         "      CI_REPO_OWNER: ${CI_REPO_OWNER}\n"
         "    commands:\n"
         "      - pip install httpx --quiet\n"
-        "      - |\n"
-        "        python -c \"\n"
-        "import httpx, json, os\n"
-        "from pathlib import Path\n"
-        "r = httpx.post(os.environ['TESTER_URL'] + '/generate-tests',\n"
-        "               json={'repo': os.environ['CI_REPO_NAME'], 'org': os.environ['CI_REPO_OWNER']},\n"
-        "               timeout=300)\n"
-        "r.raise_for_status()\n"
-        "for f in r.json()['files']:\n"
-        "    p = Path(f['path']); p.parent.mkdir(parents=True, exist_ok=True); p.write_text(f['content'])\n"
-        "print(r.json()['summary'])\n"
-        "\"\n"
+        f"      - echo {gen_b64} | base64 -d | python3\n"
         "  - name: test\n"
         f"    image: {image}\n"
         "    commands:\n"
-        f"      - {test_cmd}\n"
+        "      - pip install -r requirements.txt pytest httpx --quiet\n"
         "      - python -m pytest tests/ -v\n"
         "  - name: docker-build\n"
         "    image: docker:cli\n"
@@ -225,7 +228,7 @@ def _minimal_scaffold(name: str, description: str, stack: str) -> list[dict]:
                 "COPY requirements.txt .\n"
                 "RUN pip install --no-cache-dir -r requirements.txt\n"
                 "COPY . .\n"
-                "RUN useradd -r appuser\n"
+                "RUN useradd -r appuser && chown -R appuser /app\n"
                 "USER appuser\n"
                 "EXPOSE 8000\n"
                 'CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]\n'

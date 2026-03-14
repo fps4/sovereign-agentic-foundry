@@ -255,7 +255,7 @@ def _dockerfile() -> str:
         "COPY requirements.txt .\n"
         "RUN pip install --no-cache-dir -r requirements.txt\n"
         "COPY . .\n"
-        "RUN useradd -r appuser\n"
+        "RUN useradd -r appuser && chown -R appuser /app\n"
         "USER appuser\n"
         "EXPOSE 8000\n"
         'CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]\n'

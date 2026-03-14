@@ -43,6 +43,7 @@ GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "platform")
 GITEA_ADMIN_PASS = os.getenv("GITEA_ADMIN_PASS", "")
 APP_DOMAIN = os.getenv("APP_DOMAIN", "localhost")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+DESIGNER_URL = os.getenv("DESIGNER_URL", "http://designer:8003")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -243,63 +244,115 @@ async def chat(req: ChatRequest) -> ChatResponse:
         org = user["gitea_org"] or ""
         run_id = str(uuid4())
         history = await db.get_history(req.user_id)
-        result = await graph.ainvoke(
-            {
-                "user_id": req.user_id,
-                "message": req.message,
-                "history": history,
-                "reply": "",
-                "intent": "",
-                "task_spec": {},
-                "org": org,
-                "run_id": run_id,
-            }
-        )
+
+        # ── Designer flow: active design session or detected build intent ──────
+        in_design = bool(user.get("design_mode"))
+        if not in_design:
+            # Run the classify step to detect build intent before deciding
+            result = await graph.ainvoke(
+                {
+                    "user_id": req.user_id,
+                    "message": req.message,
+                    "history": history,
+                    "reply": "",
+                    "intent": "",
+                    "task_spec": {},
+                    "org": org,
+                    "run_id": run_id,
+                }
+            )
+            in_design = result["intent"] in ("build", "clarify_type")
+
+        if in_design:
+            return await _handle_design(req, user, org, run_id, history)
+
+        # ── Normal chat response ───────────────────────────────────────────────
         log.info("chat.request", extra={"user_id": req.user_id, "intent": result["intent"], "message_preview": req.message[:60], "run_id": run_id})
         await db.append_message(req.user_id, "user", req.message)
         await db.append_message(req.user_id, "assistant", result["reply"])
-        if result["intent"] == "build" and result.get("task_spec"):
-            spec = result["task_spec"]
-
-            # Duplicate guard: if this app is already being built, don't start again.
-            existing = await db.get_app_by_name(int(req.user_id), spec["name"])
-            if existing and existing["status"] in ("queued", "provisioning"):
-                log.info("build.duplicate_skip", extra={
-                    "user_id": req.user_id, "app_name": spec["name"], "status": existing["status"],
-                })
-                return ChatResponse(
-                    reply=(
-                        f"*{spec['name']}* is already being built — I'll message you when it's ready. "
-                        f"Use /apps to check the current status."
-                    )
-                )
-
-            app_id = await db.register_app(
-                telegram_id=int(req.user_id),
-                name=spec["name"],
-                description=spec.get("description", ""),
-                app_type=spec.get("app_type", ""),
-            )
-            log.info("build.queued", extra={"user_id": req.user_id, "app_id": app_id, "app_name": spec["name"], "org": org, "run_id": run_id})
-            await db.log_run_step(
-                run_id=run_id, agent="orchestrator", event="pipeline.started",
-                repo=spec["name"], telegram_id=int(req.user_id),
-                details={"message_preview": req.message[:120]},
-            )
-            asyncio.create_task(
-                run_build(
-                    spec=spec,
-                    org=org,
-                    telegram_id=int(req.user_id),
-                    bot_token=TELEGRAM_BOT_TOKEN,
-                    app_id=app_id,
-                    run_id=run_id,
-                )
-            )
         return ChatResponse(reply=result["reply"])
     except Exception as e:
         log.error("chat.error", extra={"user_id": req.user_id, "error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _handle_design(
+    req: ChatRequest,
+    user: dict,
+    org: str,
+    run_id: str,
+    history: list,
+) -> ChatResponse:
+    """Route message through the designer agent for clarify → spec → build flow."""
+    log.info("design.request", extra={"user_id": req.user_id, "run_id": run_id})
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{DESIGNER_URL}/design",
+                json={
+                    "user_id": req.user_id,
+                    "message": req.message,
+                    "history": history,
+                    "org": org,
+                    "run_id": run_id,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPError as exc:
+        log.error("design.error", extra={"user_id": req.user_id, "error": str(exc)})
+        await db.set_design_mode(int(req.user_id), False)
+        return ChatResponse(
+            reply="Something went wrong reaching the design service. Please try again."
+        )
+
+    await db.append_message(req.user_id, "user", req.message)
+    await db.append_message(req.user_id, "assistant", data["reply"])
+
+    if data["status"] == "clarifying":
+        await db.set_design_mode(int(req.user_id), True)
+        log.info("design.clarifying", extra={"user_id": req.user_id, "run_id": run_id})
+        return ChatResponse(reply=data["reply"])
+
+    # Designer is ready — clear design mode and kick off the build
+    await db.set_design_mode(int(req.user_id), False)
+    spec = data.get("spec", {})
+    if not spec:
+        return ChatResponse(reply=data["reply"])
+
+    existing = await db.get_app_by_name(int(req.user_id), spec["name"])
+    if existing and existing["status"] in ("queued", "provisioning"):
+        log.info("build.duplicate_skip", extra={"user_id": req.user_id, "app_name": spec["name"]})
+        return ChatResponse(
+            reply=(
+                f"*{spec['name']}* is already being built — I'll message you when it's ready. "
+                "Use /apps to check the current status."
+            )
+        )
+
+    app_id = await db.register_app(
+        telegram_id=int(req.user_id),
+        name=spec["name"],
+        description=spec.get("description", ""),
+        app_type=spec.get("app_type", ""),
+    )
+    log.info("build.queued", extra={"user_id": req.user_id, "app_id": app_id, "app_name": spec["name"], "run_id": run_id})
+    await db.log_run_step(
+        run_id=run_id, agent="orchestrator", event="pipeline.started",
+        repo=spec["name"], telegram_id=int(req.user_id),
+        details={"message_preview": req.message[:120]},
+    )
+    asyncio.create_task(
+        run_build(
+            spec=spec,
+            org=org,
+            telegram_id=int(req.user_id),
+            bot_token=TELEGRAM_BOT_TOKEN,
+            app_id=app_id,
+            run_id=run_id,
+        )
+    )
+    return ChatResponse(reply=data["reply"])
 
 
 @app.get("/apps", response_model=list[AppInfo])

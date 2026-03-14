@@ -229,8 +229,17 @@ async def run_build(
             data = resp.json()
 
         duration_ms = int((asyncio.get_event_loop().time() - _t0) * 1000)
+
+        # Activate in Woodpecker CI so the push webhook triggers the pipeline
+        try:
+            from woodpecker import activate_repo
+            await activate_repo(org, name)
+        except Exception as exc:
+            log.warning("woodpecker.activation_failed", extra={"app_name": name, "error": str(exc)})
+
+        # Status is "building" — Woodpecker CI will deploy the container
         await update_app_status(
-            app_id, "active",
+            app_id, "building",
             repo_url=data["repo_url"],
             app_url=data["app_url"],
         )
@@ -246,10 +255,10 @@ async def run_build(
                 details={"repo_url": data["repo_url"], "app_url": data["app_url"]},
             )
         await _telegram(
-            f"*{name}* is ready!\n\n"
-            f"Open it: {data['app_url']}\n"
-            f"Code: {data['repo_url']}\n\n"
-            f"It updates automatically whenever you push to main."
+            f"✅ *{name}* code is ready — CI is building the container now!\n\n"
+            f"Code: {data['repo_url']}\n"
+            f"App (live in ~2 min): {data['app_url']}\n\n"
+            f"It updates automatically on every push to main."
         )
     except Exception as exc:
         duration_ms = int((asyncio.get_event_loop().time() - _t0) * 1000)

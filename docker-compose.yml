@@ -53,6 +53,7 @@ services:
       GITEA__server__ROOT_URL: "http://${DS1_HOST:-localhost}:3000/"
       GITEA__security__INSTALL_LOCK: "true"
       GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__webhook__ALLOWED_HOST_LIST: "*"
     volumes:
       - gitea_data:/data
     ports:
@@ -126,6 +127,7 @@ services:
       WOODPECKER_BACKEND: docker
       DOCKER_HOST: unix:///var/run/docker.sock
       WOODPECKER_BACKEND_DOCKER_VOLUMES: "/var/run/docker.sock:/var/run/docker.sock"
+      WOODPECKER_BACKEND_DOCKER_NETWORK: platform_platform
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -180,7 +182,9 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - platform
+      platform:
+        aliases:
+          - tester
 
   coder:
     build: ./agents/coder
@@ -220,6 +224,9 @@ services:
       DB_URL: postgresql://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform
       APP_DOMAIN: ${APP_DOMAIN:-localhost}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      WOODPECKER_DB_URL: postgresql://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/woodpecker
+      WOODPECKER_HOOK_HOST: http://woodpecker-server:8000
+      GITEA_EXTERNAL_URL: http://${DS1_HOST:-localhost}:3000
     depends_on:
       ollama:
         condition: service_healthy

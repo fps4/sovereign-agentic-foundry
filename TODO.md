@@ -2,6 +2,7 @@
 
 ## Next 
 
+- End to end testing to ensure: user request -> clarify & design -> code -> test -> report back -> working public url
 - Improve issue reporting by the monitor agent
 - Introduce compliance agent
 

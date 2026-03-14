@@ -59,18 +59,6 @@ def _setup_logger(name: str) -> logging.Logger:
 
 
 log = _setup_logger("tester")
-def _setup_logger(name: str) -> logging.Logger:
-    logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger
-    handler = logging.StreamHandler()
-    handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    return logger
-
-
-log = _setup_logger("tester")
 
 app = FastAPI(title="Tester Agent")
 
@@ -135,7 +123,12 @@ async def _fetch_source_files(org: str, repo: str) -> list[dict]:
                 continue
             if item["name"].startswith("test_") or item["name"].endswith(".test.js"):
                 continue
-            file_resp = await client.get(item["download_url"])
+            # Use the internal Gitea URL for raw file content instead of download_url
+            # (download_url uses the external ROOT_URL which is not reachable inside Docker)
+            file_resp = await client.get(
+                f"{GITEA_URL}/api/v1/repos/{org}/{repo}/raw/{item['path']}?ref=main",
+                auth=_auth(),
+            )
             if file_resp.status_code == 200:
                 files.append({"path": item["path"], "content": file_resp.text})
     return files
@@ -240,17 +233,10 @@ async def generate_tests(req: GenerateTestsRequest) -> GenerateTestsResponse:
     if not any(p.startswith("tests/") and p.endswith("__init__.py") for p in paths):
         test_files.append({"path": "tests/__init__.py", "content": ""})
 
-    # Commit test files back to repo
-    for f in test_files:
-        try:
-            await _commit_file(req.org, req.repo, f["path"], f["content"])
-        except Exception:
-            pass
-
     duration_ms = int((_time.monotonic() - _t0) * 1000)
     test_paths = [f["path"] for f in test_files]
-    log.info("tests.committed", extra={"repo": req.repo, "files": test_paths, "run_id": run_id})
-    await _log(run_id, "tests.committed", repo=req.repo, status="ok",
+    log.info("tests.ready", extra={"repo": req.repo, "files": test_paths, "run_id": run_id})
+    await _log(run_id, "tests.ready", repo=req.repo, status="ok",
                duration_ms=duration_ms, details={"files": test_paths})
     return GenerateTestsResponse(
         files=test_files,

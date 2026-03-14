@@ -20,9 +20,14 @@ async def init_pool() -> None:
             gitea_org     TEXT,
             verified      BOOLEAN DEFAULT FALSE,
             verification_code TEXT,
+            design_mode   BOOLEAN DEFAULT FALSE,
             created_at    TIMESTAMPTZ DEFAULT NOW()
         )
     """)
+    # Migrate existing tables that predate design_mode column
+    await _pool.execute(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS design_mode BOOLEAN DEFAULT FALSE"
+    )
     await _pool.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id         SERIAL PRIMARY KEY,
@@ -124,6 +129,14 @@ async def verify_user(telegram_id: int, gitea_org: str) -> None:
         """,
         telegram_id,
         gitea_org,
+    )
+
+
+async def set_design_mode(telegram_id: int, active: bool) -> None:
+    await _pool.execute(
+        "UPDATE users SET design_mode = $2 WHERE telegram_id = $1",
+        telegram_id,
+        active,
     )
 
 

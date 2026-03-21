@@ -192,7 +192,7 @@ services:
       gateway:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health 2>/dev/null || wget -qO- http://localhost:3032 > /dev/null 2>&1 && echo ok || exit 1"]
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1:3032 || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5

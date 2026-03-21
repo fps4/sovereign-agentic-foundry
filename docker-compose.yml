@@ -4,11 +4,16 @@ services:
 
   traefik:
     image: traefik:v3.2
+    command:
+      - "--log.level=WARN"
+      - "--entrypoints.web.address=:80"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=platform_platform"
     ports:
       - "80:80"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./infra/traefik.yml:/etc/traefik/traefik.yml:ro
     networks:
       - platform
 

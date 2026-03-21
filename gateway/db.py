@@ -100,6 +100,64 @@ async def _migrate() -> None:
     await _pool.execute(
         "CREATE INDEX IF NOT EXISTS agent_runs_repo ON agent_runs (repo, created_at DESC)"
     )
+    # Idempotent column additions for schema evolution
+    for stmt in [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id)",
+        "ALTER TABLE apps ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE apps ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id)",
+        "ALTER TABLE apps ADD COLUMN IF NOT EXISTS created_by_user_id TEXT",
+    ]:
+        await _pool.execute(stmt)
+
+    # Convert telegram_id bigint → text if not already done (supports web users)
+    col_type = await _pool.fetchval(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_name='users' AND column_name='telegram_id'"
+    )
+    if col_type and col_type != 'text':
+        await _pool.execute(
+            "ALTER TABLE apps DROP CONSTRAINT IF EXISTS apps_telegram_id_fkey"
+        )
+        await _pool.execute(
+            "ALTER TABLE apps ALTER COLUMN telegram_id TYPE text USING telegram_id::text"
+        )
+        await _pool.execute(
+            "ALTER TABLE users ALTER COLUMN telegram_id TYPE text USING telegram_id::text"
+        )
+        await _pool.execute(
+            "ALTER TABLE apps ADD CONSTRAINT apps_telegram_id_fkey "
+            "FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) NOT VALID"
+        )
+        await _pool.execute(
+            "ALTER TABLE apps VALIDATE CONSTRAINT apps_telegram_id_fkey"
+        )
+
+    # Backfill tenants for existing users that have gitea_org but no tenant_id
+    existing_users = await _pool.fetch(
+        "SELECT telegram_id, gitea_org FROM users "
+        "WHERE gitea_org IS NOT NULL AND tenant_id IS NULL"
+    )
+    for row in existing_users:
+        tenant_id = await _pool.fetchval(
+            "INSERT INTO tenants (gitea_org) VALUES ($1) "
+            "ON CONFLICT DO NOTHING RETURNING id",
+            row["gitea_org"],
+        )
+        if tenant_id is None:
+            tenant_id = await _pool.fetchval(
+                "SELECT id FROM tenants WHERE gitea_org = $1", row["gitea_org"]
+            )
+        await _pool.execute(
+            "UPDATE users SET tenant_id = $1, verified = TRUE WHERE telegram_id = $2",
+            tenant_id, row["telegram_id"],
+        )
+        await _pool.execute(
+            "UPDATE apps SET tenant_id = $1, created_by_user_id = $2 "
+            "WHERE telegram_id = $2 AND tenant_id IS NULL",
+            tenant_id, row["telegram_id"],
+        )
     await _pool.execute("""
         CREATE TABLE IF NOT EXISTS board_cards (
             id          SERIAL PRIMARY KEY,

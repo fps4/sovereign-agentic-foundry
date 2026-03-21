@@ -10,6 +10,8 @@ related:
   - docs/architecture/components/planner.md
   - docs/architecture/components/reviewer.md
   - docs/architecture/components/ui-designer.md
+  - docs/architecture/components/template-library.md
+  - docs/architecture/decisions/0005-template-library.md
 ---
 
 ## Purpose
@@ -19,8 +21,8 @@ The builder agent generates application code files from a build plan produced by
 ## Responsibilities
 
 **Owns:**
-- LLM-based code file generation for all five app types, guided by the build plan
-- Typed fallback templates when LLM output cannot be parsed
+- Template loading: reads the API template selected by the planner from `/templates/api/`
+- LLM-based augmentation of the template with app-specific routes, models, and business logic
 - Applying fix instructions from the reviewer on retry (bounded)
 - Returning a route manifest alongside generated files for the ui-designer
 - Generating `README.md` and optional `docs/` files co-located with the application code
@@ -37,33 +39,35 @@ The builder agent generates application code files from a build plan produced by
 | Component | Responsibility |
 |-----------|----------------|
 | `main.py` | FastAPI app, `POST /build` endpoint |
-| `generate.py` | LLM-based file generation; JSON mode prompt + output parsing |
-| `templates/` | Hardcoded fallback scaffolds per app type |
+| `template_loader.py` | Reads the base template from `/templates/api/{template_id}/`; exposes template file set |
+| `generate.py` | LLM-based augmentation; sends template files + spec + build plan; merges LLM additions into template |
 | `docs.py` | Generates `README.md` and optional `docs/` files from the spec, route manifest, and build plan |
 
 ## Key flows
 
 ### Happy path
 
-1. Gateway calls `POST /build` with `{spec, build_plan}`
-2. `generate.py` calls Ollama in JSON mode; LLM returns `{files: [{path, content}]}`
-3. Builder extracts a route manifest from generated files for the ui-designer
-4. Returns `{files, routes: [{method, path, description}]}`
+1. Gateway calls `POST /build` with `{spec, build_plan}` (build plan includes `template`, `template_version`, `frontend`, `db`)
+2. `template_loader.py` reads base files from `/templates/api/{build_plan.template}/`
+3. `generate.py` sends template files + spec + build plan to Ollama: *"These template files implement the platform contract. Add app-specific routes, models, and business logic only."*
+4. LLM returns `{files: [{path, content}]}` — only additions and modifications; protected files are excluded from LLM output
+5. Builder merges LLM output into the template file set; template-provided files that LLM did not touch pass through unchanged
+6. Builder extracts a route manifest from the merged file set for the ui-designer
+7. Returns `{files, routes: [{method, path, description}], template_used: "fastapi-base/v1"}`
 
 ### Reviewer fix loop
 
 1. Reviewer returns `{passed: false, fix_instructions: [...]}`
 2. Gateway calls `POST /build` again with original build plan + fix instructions as additional context
-3. Builder regenerates affected files only
+3. Builder regenerates only the LLM-added files; template-provided files are not re-evaluated
 4. Returns updated file set to reviewer
 5. Bounded by `MAX_REVIEWER_RETRIES` in the gateway
 
 ### LLM parse failure (fallback)
 
-1. LLM returns malformed JSON or missing required fields
-2. `generate.py` loads the typed fallback template for the app type
-3. Fallback files are returned; build proceeds normally
-4. Limitation is logged to `agent_runs`
+1. LLM returns malformed JSON or unusable output
+2. Builder returns the base template file set unchanged (a minimal but standards-compliant app)
+3. Fallback is logged to `agent_runs`; build continues (unlike the previous per-type fallback model, all types now have a valid fallback — the template itself)
 
 ### Documentation generation
 
@@ -137,5 +141,7 @@ The builder agent has no direct database access. It does not read or write any P
 
 ## Known limitations
 
-- Fallback templates only exist for the `form` app type; other types that fail LLM parsing surface an error rather than falling back.
-- Route manifest extraction from generated files is heuristic; non-standard route registration patterns (e.g. dynamic route mounting) may produce an incomplete manifest.
+- The LLM may modify template-provided protected files (Dockerfile, logging setup) despite prompt instructions; the reviewer's static checks catch these regressions but add a retry cycle.
+- Route manifest extraction from merged files is heuristic; non-standard route registration patterns may produce an incomplete manifest.
+- Template files are baked into the builder image; updating a template requires rebuilding the builder container. Running builds are not affected.
+- LLM augmentation prompt length grows with template file count; very large templates may need summarisation rather than full inclusion to fit within the context window.

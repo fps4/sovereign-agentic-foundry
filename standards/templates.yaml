@@ -1,0 +1,160 @@
+---
+# Template library standards
+# Loaded by: planner agent, builder agent, ui-designer agent
+# Purpose: defines the canonical templates for generated apps, allowed stacks,
+#          and rules for LLM augmentation. Injected into planner and builder
+#          system prompts alongside naming.yaml, security.yaml, and patterns.yaml.
+#
+# Mount path: /standards/templates.yaml
+
+current_version: "v1"
+
+# ── API templates ──────────────────────────────────────────────────────────────
+
+api_templates:
+  - id: fastapi-base
+    stack: fastapi
+    language: python
+    version: "v1"
+    path: /templates/api/fastapi-base
+    description: >
+      Python 3.12 FastAPI application. Default stack for all app types.
+      Pre-wired with health/readiness endpoints, structured JSON logging,
+      Pydantic Settings config, non-root Dockerfile, and .woodpecker.yml.
+    use_for:
+      - form
+      - workflow
+      - assistant
+      - connector    # when spec requires Python or Python integrations
+      - dashboard    # when spec requires Python data processing
+
+  - id: express-base
+    stack: express
+    language: javascript
+    version: "v1"
+    path: /templates/api/express-base
+    description: >
+      Node.js 22 Express application. Alternative stack for connector and dashboard
+      when the operator's integration target has a JavaScript SDK, or when the spec
+      explicitly involves JavaScript-native processing (e.g. JSON transforms, web scraping).
+    use_for:
+      - connector    # when spec requires JS integrations or webhooks
+      - dashboard    # when spec requires JS data processing
+
+# ── Frontend templates ─────────────────────────────────────────────────────────
+
+frontend_templates:
+  - id: mui-minimal
+    framework: nextjs
+    version: "v1"
+    path: /templates/frontend/mui-minimal
+    description: >
+      Next.js 15 application based on the MUI Minimal v7 template.
+      Provides the design system, theme, API client wiring, and
+      standalone Docker output. The ui-designer adapts this template
+      for each app's specific pages, forms, tables, and components.
+    use_for:
+      - form
+      - dashboard
+      - workflow
+      - assistant    # chat-adapted layout; ui-designer adds the chat section
+
+# ── Stack selection rules (for planner) ───────────────────────────────────────
+
+stack_selection:
+  default_api: fastapi-base
+  default_frontend: mui-minimal
+  frontend_required:
+    - form
+    - dashboard
+    - workflow
+    - assistant
+  frontend_not_required:
+    - connector    # headless; no browser-facing frontend unless spec explicitly requests one
+
+  # When to prefer express-base over fastapi-base:
+  prefer_express_when:
+    - spec mentions Node.js, npm, JavaScript, TypeScript, or Bun
+    - integration target has no Python SDK but has an npm package
+    - spec involves webhook processing with JavaScript-native tooling
+    # Otherwise, default to fastapi-base
+
+# ── Database selection rules (for planner) ────────────────────────────────────
+
+db_selection:
+  options:
+    - sqlite:    "Embedded SQLite; no tenant infrastructure required; data lost if container is removed without a volume"
+    - postgres:  "Tenant Postgres container; persistent relational storage; tenant infra must be provisioned first"
+    - mongo:     "Tenant MongoDB container; persistent document storage; tenant infra must be provisioned first"
+    - none:      "No database; stateless app or external data sources injected via env vars"
+
+  rules:
+    - app_type: form
+      default: sqlite
+      use_postgres_when: "spec requires data to survive container restarts, or operator will have >100 rows"
+    - app_type: workflow
+      default: postgres
+      reason: "Workflow state must survive restarts; SQLite data loss on container removal is unacceptable"
+    - app_type: connector
+      default: postgres
+      use_mongo_when: "spec involves document storage, log ingestion, or schema-less event data"
+    - app_type: assistant
+      default: postgres
+      reason: "Vector embeddings require pgvector extension on tenant Postgres; no alternative"
+    - app_type: dashboard
+      default: none
+      reason: "Dashboards read external data sources; they do not write"
+
+# ── LLM augmentation rules ────────────────────────────────────────────────────
+
+augmentation_rules:
+  # Files the LLM must NOT modify (platform contract; reviewer checks for violations)
+  protected_files:
+    api:
+      - Dockerfile           # non-root user, pinned base image — must not be changed
+      - logging.py           # structured logging format — must not be changed
+      - logger.js            # structured logging format — must not be changed
+      - config.py            # env-var-only config — must not be changed
+      - config.js            # env-var-only config — must not be changed
+    frontend:
+      - Dockerfile           # non-root user, standalone output — must not be changed
+      - next.config.mjs      # standalone output config — must not be changed
+      - src/theme/           # MUI theme — must not be changed by builder; ui-designer may adapt palette only
+
+  # Files the LLM is expected to add or replace
+  expected_additions:
+    api_fastapi:
+      - "routes/*.py"        # app-specific route modules
+      - "models/*.py"        # SQLAlchemy / Pydantic models
+      - "database.py"        # DB session and connection (if db != none)
+    api_express:
+      - "routes/*.js"        # app-specific route modules
+      - "models/*.js"        # Mongoose schemas or Postgres query modules
+      - "database.js"        # DB connection (if db != none)
+    frontend:
+      - "src/app/**/*.tsx"   # pages (ui-designer generates these)
+      - "src/sections/**"    # MUI section components for each app route
+
+  # Health endpoints — always present, LLM must not remove or alter
+  required_endpoints:
+    - path: /health
+      method: GET
+      response: '{"status": "ok"}'
+      status_code: 200
+    - path: /ready
+      method: GET
+      response: '{"status": "ok"}' # or {"status": "error"} on dependency failure
+      status_code: 200  # or 503
+
+# ── Reviewer exclusions ───────────────────────────────────────────────────────
+
+reviewer_exclusions:
+  # These template-provided files are trusted and excluded from LLM review.
+  # Reviewer only checks files not in this list.
+  trusted_template_files:
+    - Dockerfile
+    - logging.py
+    - logger.js
+    - config.py
+    - config.js
+    - .woodpecker.yml   # reviewer checks LLM-added steps only

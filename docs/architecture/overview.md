@@ -166,6 +166,15 @@ Generated app containers carry a `platform.tenant={tenant_id}` Docker label, whi
 
 **Future:** adding a second user to a tenant requires only a `tenant_memberships` join table — no changes to `apps`, `board_cards`, or any agent code.
 
+### Template library
+
+The builder and ui-designer use a template library of base scaffolds rather than generating all code from a blank slate. Templates guarantee the mandatory platform contract (health endpoints, Dockerfile security, CI structure) without LLM involvement. The LLM adds only app-specific code on top.
+
+- **API templates:** `fastapi-base` (Python 3.12 / FastAPI) and `express-base` (Node 22 / Express). The planner selects the stack based on spec analysis; FastAPI is the default.
+- **Frontend template:** `mui-minimal` (Next.js 15 / MUI Minimal v7). All app types with a browser UI use this template. The ui-designer adapts it for the app's specific pages, forms, and components.
+
+Templates are versioned, baked into the builder and ui-designer Docker images, and mounted read-only at `/templates`. See `docs/architecture/components/template-library.md` and `docs/architecture/decisions/0005-template-library.md`.
+
 ### Standards injection
 
 `standards/` contains YAML files (`naming.yaml`, `security.yaml`, `patterns.yaml`) loaded at agent startup and appended to every LLM system prompt. This is the mechanism that makes generated apps architecturally consistent across runs. The same standards define the mandatory runtime contract that every generated app must satisfy (health endpoints, logging format, Dockerfile rules).

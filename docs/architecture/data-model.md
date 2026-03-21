@@ -132,14 +132,46 @@ Kanban board state. One board is implicit per app (no separate `boards` table). 
 ## Relationships
 
 ```
-tenants ─< users            (one tenant, one or more users; v1: always one)
-tenants ─< apps             (one tenant, many apps; primary ownership unit)
-users   ─< messages         (one user, many messages; conversation history is personal)
-users   ─< apps             (created_by_user_id; audit reference only)
-apps    ─< app_issues       (one app, many deduplicated issues)
-apps    ─< board_cards      (one app, many kanban cards)
+tenants ─< users             (one tenant, one or more users; v1: always one)
+tenants ─< apps              (one tenant, many apps; primary ownership unit)
+tenants ─< tenant_resources  (one tenant, 0–2 infrastructure containers: Postgres, MongoDB)
+users   ─< messages          (one user, many messages; conversation history is personal)
+users   ─< apps              (created_by_user_id; audit reference only)
+apps    ─< app_resources     (one app, 0–2 per-app databases within tenant containers)
+apps    ─< app_issues        (one app, many deduplicated issues)
+apps    ─< board_cards       (one app, many kanban cards)
+tenant_resources ─< app_resources  (one tenant container, many per-app databases)
 ```
 
 `agent_runs` is append-only and not foreign-keyed to `apps`; it references repos and run IDs by string for resilience across deploys.
 
 **Future: `tenant_memberships`** (deferred to a future ADR) — a join table for team tenants (`owner`, `member`, `viewer` roles). No schema changes to `apps`, `board_cards`, or any agent are required to add this.
+
+### `tenant_resources`
+
+Tracks per-tenant infrastructure containers (Postgres, MongoDB). One row per tenant per database type. Written and read by the infra agent.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | SERIAL PK | |
+| `tenant_id` | INTEGER | FK → `tenants.id` |
+| `resource_type` | TEXT | `postgres` or `mongo` |
+| `container_name` | TEXT | e.g. `tenant-42-postgres` |
+| `host` | TEXT | Hostname on `platform_platform` network |
+| `port` | INTEGER | Container port (5432 for Postgres, 27017 for MongoDB) |
+| `status` | TEXT | `running`, `starting`, `error` |
+| `created_at` | TIMESTAMPTZ | |
+
+### `app_resources`
+
+Tracks per-app databases within tenant containers. One row per provisioned resource per app. Written and read by the infra agent.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | SERIAL PK | |
+| `app_id` | INTEGER | FK → `apps.id` |
+| `tenant_resource_id` | INTEGER | FK → `tenant_resources.id`; the container this DB lives in |
+| `resource_type` | TEXT | `postgres_db` or `mongo_db` |
+| `db_name` | TEXT | Database name within the tenant container |
+| `db_user` | TEXT | Scoped user created for this app |
+| `created_at` | TIMESTAMPTZ | |

@@ -27,6 +27,7 @@
 | File | Description |
 |------|-------------|
 | [`architecture/components/generated-app.md`](architecture/components/generated-app.md) | Runtime model for generated apps: app types, resource model, interface contract, lifecycle |
+| [`architecture/components/template-library.md`](architecture/components/template-library.md) | Template library: API and frontend base scaffolds used by builder and ui-designer |
 
 ### Components — agents
 
@@ -59,6 +60,8 @@
 | [`architecture/decisions/0001-workflow-orchestration.md`](architecture/decisions/0001-workflow-orchestration.md) | ADR-0001: Adopt Temporal for workflow orchestration |
 | [`architecture/decisions/0002-kanban-board-integration.md`](architecture/decisions/0002-kanban-board-integration.md) | ADR-0002: Unified web portal as primary user interface |
 | [`architecture/decisions/0003-tenant-model.md`](architecture/decisions/0003-tenant-model.md) | ADR-0003: Introduce tenant as the primary scoping unit |
+| [`architecture/decisions/0004-tenant-infra-layer.md`](architecture/decisions/0004-tenant-infra-layer.md) | ADR-0004: Per-tenant database infrastructure layer |
+| [`architecture/decisions/0005-template-library.md`](architecture/decisions/0005-template-library.md) | ADR-0005: Template library for generated app scaffolding |
 
 ## Guides
 

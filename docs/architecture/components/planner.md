@@ -10,6 +10,8 @@ related:
   - docs/architecture/components/intake.md
   - docs/architecture/components/builder.md
   - docs/architecture/components/infra.md
+  - docs/architecture/components/template-library.md
+  - docs/architecture/decisions/0005-template-library.md
 ---
 
 ## Purpose
@@ -19,11 +21,12 @@ The planner agent translates a locked spec into a concrete build plan: the file 
 ## Responsibilities
 
 **Owns:**
+- Template selection: which API template (`fastapi-base` or `express-base`) and whether a frontend is required — from `standards/templates.yaml` rules
+- Database selection: `sqlite`, `postgres`, `mongo`, or `none` — from `templates.yaml` db selection rules and spec analysis
 - File and directory structure decisions for the target app type
 - Pattern selection from `patterns.yaml` (e.g. repository pattern, middleware chain)
-- Dependency manifest (which libraries, which versions)
-- Stack variant selection (e.g. FastAPI with SQLite vs FastAPI with Postgres)
-- External resource requirements: signals whether the app needs Postgres, pgvector, or other infra
+- Dependency manifest (which libraries, which versions, layered on top of template deps)
+- External resource requirements: signals whether the app needs tenant Postgres, tenant MongoDB, or no infra agent call
 - Test strategy: which routes and behaviours the test-writer should target
 
 **Does not own:**
@@ -49,22 +52,29 @@ The planner agent translates a locked spec into a concrete build plan: the file 
 3. LLM returns a build plan:
    ```json
    {
-     "files": [{"path": "...", "description": "..."}],
-     "dependencies": ["fastapi", "sqlalchemy", ...],
-     "stack": {"framework": "fastapi", "db": "sqlite"},
-     "routes": [{"method": "GET", "path": "/", "description": "..."}],
-     "resources_required": [],
-     "test_targets": [{"route": "GET /", "scenario": "returns 200"}]
+     "template": "fastapi-base",
+     "template_version": "v1",
+     "frontend": true,
+     "frontend_template": "mui-minimal",
+     "stack": "fastapi",
+     "db": "postgres",
+     "files": [{"path": "api/routes/items.py", "description": "CRUD routes for items"}],
+     "dependencies": ["sqlalchemy", "alembic"],
+     "routes": [{"method": "GET", "path": "/items", "description": "List all items"}],
+     "resources_required": ["postgres"],
+     "test_targets": [{"route": "GET /items", "scenario": "returns 200 with empty list"}]
    }
    ```
-4. Plan validator checks required fields are present
+4. Plan validator checks required fields are present and that `template` is a valid id from `standards/templates.yaml`
 5. Returns plan to gateway
 
 ### Resource requirements identified
 
-1. LLM determines app type needs external resources (e.g. `assistant` needs pgvector)
-2. Plan includes `"resources_required": ["pgvector"]`
-3. Gateway calls infra agent to provision, then passes provisioned context back to planner on a second call (or planner assumes resources will be available at runtime via env vars)
+1. LLM sets `db: "postgres"` or `db: "mongo"` in the plan
+2. Plan includes `"resources_required": ["postgres"]` or `["mongo"]`
+3. Gateway calls infra agent `POST /provision` with `{tenant_id, app_name, resources}`
+4. Infra provisions tenant container (if needed) and per-app database; returns connection env vars
+5. Builder receives provisioned resource context and references the env vars in generated code
 
 ### Plan validation failure
 
@@ -124,3 +134,4 @@ The planner agent has no direct database access. All data persistence (agent run
 
 - Plan quality degrades for `connector` and `assistant` app types where the operator's requirements tend to be underspecified; intake must elicit sufficient detail before locking the spec.
 - The planner has no feedback loop from the reviewer — if a pattern it selects consistently causes standards violations, there is no automated correction signal.
+- Template selection is rule-based (from `templates.yaml`); the LLM cannot override the template choice even if the spec implies a different stack. Stack overrides require updating `templates.yaml`.

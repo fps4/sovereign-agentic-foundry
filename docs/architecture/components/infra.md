@@ -7,6 +7,7 @@ c4_level: component
 container: infra
 related:
   - docs/architecture/overview.md
+  - docs/architecture/decisions/0004-tenant-infra-layer.md
   - docs/architecture/components/planner.md
   - docs/architecture/components/builder.md
   - docs/architecture/data-model.md
@@ -14,90 +15,119 @@ related:
 
 ## Purpose
 
-The infra agent provisions and manages per-app infrastructure resources that go beyond a single application container: dedicated databases, vector stores for RAG apps, and per-app secret injection. It is called by the build pipeline when the planner determines that the app type requires external resources. It also handles teardown when an app is deleted.
+The infra agent provisions and manages infrastructure resources for the tenant tier. It operates at two levels:
 
-The infra agent is not required for app types that only need a self-contained container (`form`, `dashboard`, `workflow`). It becomes necessary when apps need persistent external state or external API credentials (`connector`, `assistant`).
+1. **Tenant-level provisioning** — dedicated Postgres and MongoDB containers, one per tenant per database type, provisioned lazily on first need. These containers are long-lived and shared by all apps within the tenant.
+2. **App-level provisioning** — creates a database and scoped user within the tenant's already-running container when an individual app needs persistent storage. Writes connection secrets to the app's Gitea repo.
+
+The infra agent is not involved for apps that use only SQLite (`form` in simple cases). It is required for any app that needs relational storage (`postgres`), document storage (`mongo`), or vector search (pgvector extension on the tenant Postgres container).
+
+See `docs/architecture/decisions/0004-tenant-infra-layer.md` for the rationale behind this two-phase model.
 
 ## Responsibilities
 
 **Owns:**
-- Per-app PostgreSQL database and user provisioning
-- pgvector instance provisioning for `assistant` apps
-- Per-app secret generation (DB credentials, API keys) and secure injection into the app's runtime environment via Docker labels or Gitea-stored env files
-- Resource inventory: tracking what each app has provisioned
-- Teardown of all provisioned resources when an app is deleted or archived
+- Tenant Postgres container lifecycle: start, readiness check, record in `tenant_resources`
+- Tenant MongoDB container lifecycle: start, readiness check, record in `tenant_resources`
+- Per-app database and user creation within tenant containers
+- pgvector extension setup on the tenant Postgres container (for `assistant` apps)
+- Per-app secret generation and secure injection into the app's Gitea repo (`.env.platform`)
+- Teardown: per-app database drop on app deletion; tenant container removal only when all apps in the tenant are deleted
 
 **Does not own:**
 - Application container lifecycle (owned by Woodpecker CI and Traefik)
 - CI pipeline configuration (owned by the builder agent)
-- Platform-level infrastructure (Postgres platform DB, Gitea, Woodpecker — these are fixed and not managed by this agent)
-- Backup or restore of per-app databases
+- Platform-level infrastructure (platform Postgres, Gitea, Woodpecker — fixed, not managed by this agent)
+- Backup or restore of tenant databases
 
 ## Internal structure
 
 | Component | Responsibility |
 |-----------|----------------|
-| `main.py` | FastAPI app, `POST /provision` and `POST /teardown` endpoints |
-| Docker SDK client | Spins up and removes per-app resource containers on the platform network |
-| Postgres provisioner | Creates a database and scoped user in the platform Postgres instance for apps that need relational storage |
-| Secret manager | Generates credentials; writes them as environment variables into the app's Gitea repo (`.env.platform`) |
-| Resource registry | `app_resources` table — tracks resource type, container name, and connection details per app |
+| `main.py` | FastAPI app; all endpoints |
+| `tenant_provisioner.py` | Manages tenant-level container lifecycle (start, health check, record state) |
+| `app_provisioner.py` | Creates per-app databases and users within tenant containers |
+| `secret_manager.py` | Generates credentials; writes `.env.platform` to Gitea |
+| Docker SDK client | Starts and stops tenant containers; checks health |
 
 ## Key flows
 
-### Provision (called during build pipeline)
+### Provision (two-phase, called during build pipeline)
 
-1. Planner identifies that the app type requires external resources and includes `{resources: ["postgres"]}` or `{resources: ["pgvector"]}` in the build plan
-2. Gateway calls `POST /provision` with `{app_name, user_id, resources}`
-3. For each requested resource:
-   - `postgres`: creates a dedicated database and user in the platform Postgres instance; records credentials
-   - `pgvector`: starts a `pgvector/pgvector` container on the platform network; records connection string
-4. Secrets are written to `.env.platform` in the app's Gitea repo (created or updated before builder runs)
-5. Returns `{provisioned: [{type, connection_env_var, status}]}` to the gateway
-6. Builder receives the provisioned resource list as part of its build context and references the env vars in generated code
+**Phase 1 — ensure tenant infrastructure exists:**
 
-### Teardown (called on app deletion)
+1. Gateway calls `POST /provision` with `{tenant_id, app_name, resources: ["postgres"]}` (or `"mongo"`)
+2. Infra queries `tenant_resources` for `{tenant_id, resource_type}`
+3. **If container exists and is running:** skip to Phase 2
+4. **If container does not exist:**
+   a. Pull image if not present (`pgvector/pgvector` for Postgres, `mongo` pinned for MongoDB)
+   b. Start container: `tenant-{tenant_id}-postgres` or `tenant-{tenant_id}-mongo`
+   c. Join container to `platform_platform` network
+   d. Wait for readiness (retry with backoff, max 60 s)
+   e. For Postgres: enable pgvector extension (`CREATE EXTENSION IF NOT EXISTS vector`)
+   f. Record container name, host, port, and status in `tenant_resources`
 
-1. Operator calls `/delete` via Telegram; gateway calls `POST /teardown` with `{app_name}`
+**Phase 2 — provision per-app database:**
+
+5. Create database `{app-name}` within the tenant's container
+6. Create scoped user `{app-name}-user` with `SELECT, INSERT, UPDATE, DELETE` on the app's database only
+7. Generate credentials; build connection DSN
+8. Write DSN and credentials to `.env.platform` in the app's Gitea repo
+9. Return `{provisioned: [{type, connection_env_var, dsn_env_var, status}]}` to gateway
+
+### Teardown (app deletion)
+
+1. Gateway calls `POST /teardown` with `{tenant_id, app_name}`
 2. Infra reads `app_resources` for the app
-3. Removes per-app resource containers (pgvector instances)
-4. Drops the per-app Postgres database and user
-5. Deletes `.env.platform` from the app's Gitea repo
-6. Removes rows from `app_resources`
-7. Returns `{torn_down: [...]}` to gateway; gateway proceeds with Gitea repo archive
+3. Drops database `{app-name}` and user `{app-name}-user` from the tenant container
+4. Deletes `.env.platform` from the app's Gitea repo
+5. Removes app rows from `app_resources`
+6. Does **not** remove the tenant container (other apps may use it)
+7. Returns `{torn_down: [...]}` to gateway
+
+### Tenant teardown (all apps deleted, offboarding)
+
+1. Gateway calls `POST /tenants/{tenant_id}/teardown` (future endpoint; called on tenant offboarding)
+2. Infra stops and removes `tenant-{tenant_id}-postgres` and `tenant-{tenant_id}-mongo` (if running)
+3. Removes rows from `tenant_resources`
 
 ### No resources required
 
-1. Planner build plan contains no `resources` field or `resources: []`
-2. Gateway does not call the infra agent
-3. Build pipeline proceeds directly to builder
+1. Planner build plan has `db: "sqlite"` or `db: "none"`
+2. Gateway does not call infra agent
+3. Build pipeline proceeds directly to the builder
 
 ## Data owned
 
 **Writes:**
-- `app_resources` table (Postgres) — records each provisioned resource: type, container name, connection string, per app
-- Per-app Postgres databases and users (admin connection to platform Postgres)
-- `.env.platform` files in Gitea repos — injected secrets for the generated app
+- `tenant_resources` table — tracks per-tenant containers: type, container name, host, port, status
+- `app_resources` table — tracks per-app databases: type, dsn reference, status
+- Per-app databases and users inside tenant containers
+- `.env.platform` files in Gitea repos
 
 **Reads:**
-- `app_resources` — read during teardown to determine what to remove
+- `tenant_resources` — to check if a container already exists before starting one
+- `app_resources` — read during teardown
 
 ## Error handling and failure modes
 
 | Failure | Behaviour |
 |---------|-----------|
-| Postgres admin connection fails | Returns error to gateway; build aborted; no resources provisioned |
-| Docker socket unreachable | Returns error to gateway; pgvector container cannot be started; build aborted |
-| Partial provision (Postgres DB created, pgvector fails) | Returns error to gateway; `app_resources` may contain partial records; teardown must handle partial state |
-| Gitea secret write fails | Returns error to gateway; generated code will have missing env vars at runtime |
-| Teardown: resource container not found | Logs warning and continues; assumes already removed |
+| Docker socket unreachable | Returns error to gateway; build aborted |
+| Tenant container fails to start | Returns error to gateway; build aborted; `tenant_resources` row not written |
+| Container readiness timeout | Returns error after 60 s; build aborted; partial `tenant_resources` row marked `error` |
+| Per-app DB creation fails (container running but SQL error) | Returns error to gateway; no `app_resources` row written |
+| Gitea secret write fails | Returns error; generated code will have missing env vars at runtime; build is aborted |
+| Teardown: database not found | Logs warning; assumes already dropped; continues |
+| Teardown: container not found | Logs warning; clears `tenant_resources`; continues |
 
 ## Non-functional constraints
 
-- All resource containers share the platform Docker host; no compute or storage isolation beyond Docker networking.
-- Per-app Postgres databases are on the same Postgres instance as the platform DB; large apps can affect platform performance.
-- pgvector containers are one per app; no connection pooling.
+- Tenant containers share the platform Docker host; no CPU or storage isolation.
+- Tenant Postgres container hosts all apps for one tenant; a single large app dataset can degrade other apps in the same tenant.
+- pgvector is enabled at the tenant container level; all vector operations for all `assistant` apps within the tenant share one container.
 - Secret rotation is not supported; credentials are static for the app's lifetime.
+- The agent is idempotent: calling `POST /provision` twice for the same `{tenant_id, app_name, resources}` skips container creation and re-writes the same secrets without error.
 
 ## External interfaces
 
@@ -105,16 +135,17 @@ The infra agent is not required for app types that only need a self-contained co
 
 | Endpoint | Caller | Purpose |
 |----------|--------|---------|
-| `POST /provision` | Gateway (during build) | Provision external resources for a new app |
-| `POST /teardown` | Gateway (on app delete) | Remove all resources for a deleted app |
+| `POST /provision` | Gateway (during build) | Provision tenant infra (if needed) and per-app database |
+| `POST /teardown` | Gateway (on app delete) | Drop per-app database and remove secrets |
 | `GET /health` | Traefik / gateway | Health check |
 
 ### Calls
 
 | Target | Purpose |
 |--------|---------|
-| Docker socket (read/write) | Start and stop per-app resource containers |
-| Platform Postgres (admin connection) | Create and drop per-app databases and users |
+| Docker socket (read/write) | Start tenant containers; check health; remove on offboarding |
+| Tenant Postgres admin connection | Create and drop per-app databases and users |
+| Tenant MongoDB admin connection | Create and drop per-app databases and users |
 | Gitea HTTP API | Write `.env.platform` with injected secrets |
 
 ## Configuration
@@ -122,15 +153,17 @@ The infra agent is not required for app types that only need a self-contained co
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `DOCKER_HOST` | unix socket | Docker socket path or SSH remote host |
-| `PLATFORM_NETWORK` | `platform_platform` | Docker network all resource containers join |
-| `POSTGRES_ADMIN_URL` | — | Admin DSN for the platform Postgres instance (used to create per-app DBs) |
+| `PLATFORM_NETWORK` | `platform_platform` | Docker network all tenant containers join |
+| `POSTGRES_ADMIN_PASSWORD` | — | Password used when creating the tenant Postgres container |
+| `MONGO_ADMIN_PASSWORD` | — | Password used when creating the tenant MongoDB container |
 | `GITEA_URL` | — | Internal Gitea base URL |
 | `GITEA_ADMIN_USER` / `GITEA_ADMIN_PASS` | — | Gitea API credentials |
+| `TENANT_CONTAINER_READY_TIMEOUT` | `60` | Seconds to wait for a new container to pass readiness check |
 
 ## Known limitations
 
-- No backup or restore for per-app databases; data is lost on teardown.
-- All resource containers share the platform Docker host — there is no compute or storage isolation beyond Docker networking.
-- pgvector container provisioning is one instance per app; no connection pooling or shared vector store across apps.
-- Secret rotation is not supported; credentials generated at provision time are static for the app's lifetime.
-- If provision partially succeeds (e.g. Postgres DB created but pgvector container fails), the teardown path must handle partial state.
+- No backup or restore for tenant databases; data is lost on container removal.
+- All tenant containers share the platform Docker host — a runaway query in one tenant's container can affect other tenants on the same host.
+- pgvector is shared across all `assistant` apps within one tenant; no per-app vector store isolation.
+- Secret rotation is not supported; credentials generated at provision time are static.
+- Partial provision (tenant container started, per-app DB creation fails) leaves a running container with no associated `app_resources` row; teardown handles this gracefully but the container persists until the next successful provision or offboarding.

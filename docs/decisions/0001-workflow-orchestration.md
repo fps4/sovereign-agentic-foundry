@@ -1,7 +1,13 @@
-# ADR-001: Workflow Orchestration for Agent Pipelines
+---
+title: "0001: Workflow orchestration for agent pipelines"
+status: proposed
+date: 2026-03-14
+related:
+  - docs/architecture/overview.md
+  - docs/architecture/components/orchestrator.md
+---
 
-**Status:** Proposed  
-**Date:** 2026-03-14
+# ADR-0001: Workflow Orchestration for Agent Pipelines
 
 ---
 

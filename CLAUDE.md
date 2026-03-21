@@ -107,4 +107,12 @@ One-time manual step: create a Gitea OAuth2 app and set `WOODPECKER_GITEA_CLIENT
 - `bots/telegram/main.py` — user commands and aiogram FSM handlers
 - `standards/` — YAML rules injected into LLM prompts
 - `infra/` — Traefik, Loki, Promtail, Grafana configs
-- `docs/decisions/` — Architecture Decision Records
+
+## Documentation
+
+- `CODEBASE.md` — repo orientation map and naming notes
+- `GLOSSARY.md` — domain term definitions
+- `AGENTS.md` — agent permissions and conventions
+- `docs/README.md` — full documentation index
+- `docs/architecture/components/` — per-service design docs
+- `docs/architecture/decisions/` — ADRs

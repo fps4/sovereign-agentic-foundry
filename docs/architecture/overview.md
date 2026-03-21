@@ -179,3 +179,14 @@ Templates are versioned, baked into the builder and ui-designer Docker images, a
 ### Standards injection
 
 `standards/` contains YAML files (`naming.yaml`, `security.yaml`, `patterns.yaml`) loaded at agent startup and appended to every LLM system prompt. This is the mechanism that makes generated apps architecturally consistent across runs. The same standards define the mandatory runtime contract that every generated app must satisfy (health endpoints, logging format, Dockerfile rules).
+
+## Observability standards
+
+All platform HTTP services and agents follow the reliability contracts defined in `standards/reliability.yaml` (sourced from the agentic-standards package):
+
+- **SLO targets:** 99.9% availability; p95 latency within tier budget (FAST < 3s, STANDARD < 30s, STRONG < 60s)
+- **Golden signals:** latency (success and error separately), traffic (requests/min), errors (by type), saturation (CPU/memory; alert at 80%)
+- **Burn rate alerts:** critical at 14.4× error rate over 5m:1h window; warning at 6× over 30m:6h window
+- **Error budget policy:** if more than 50% of the monthly error budget is consumed with more than 50% of the window remaining, non-critical work is halted
+- **Agent health contract:** `GET /health` must respond in < 2s; callers retry degraded agents 3 times with exponential backoff before escalating
+- **LLM failure policy:** LLM timeout and malformed JSON output are retryable errors; after `max_retries` the agent emits a `RunEvent` with `status="error"` and the gateway surfaces the failure to the admin

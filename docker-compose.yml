@@ -138,143 +138,69 @@ services:
     networks:
       - platform
 
-  designer:
-    build: ./agents/designer
-    volumes:
-      - ./standards:/app/standards:ro
+  intake:
+    build: ./agents/intake
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
-      GITEA_URL: http://gitea:3000
-      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
-      GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
-      ORCHESTRATOR_URL: http://orchestrator:8000
     depends_on:
-      gitea-init:
-        condition: service_completed_successfully
-      ollama:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8003/health')\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - platform
-
-  tester:
-    build: ./agents/tester
-    volumes:
-      - ./standards:/app/standards:ro
-    environment:
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
-      GITEA_URL: http://gitea:3000
-      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
-      GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
-      ORCHESTRATOR_URL: http://orchestrator:8000
-    depends_on:
-      gitea-init:
-        condition: service_completed_successfully
-      ollama:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health')\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      platform:
-        aliases:
-          - tester
-
-  coder:
-    build: ./agents/coder
-    environment:
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
-      GITEA_URL: http://gitea:3000
-      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
-      GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
-      APP_DOMAIN: ${APP_DOMAIN:-localhost}
-      ORCHESTRATOR_URL: http://orchestrator:8000
-    depends_on:
-      gitea-init:
-        condition: service_completed_successfully
-      ollama:
-        condition: service_healthy
+      - ollama
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
     networks:
       - platform
 
-  orchestrator:
-    build: ./orchestrator
-    volumes:
-      - ./standards:/app/standards:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+  gateway:
+    build: ./gateway
     environment:
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
-      CODER_URL: http://coder:8001
-      DESIGNER_URL: http://designer:8003
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-platform}
       GITEA_ADMIN_PASS: ${GITEA_ADMIN_PASS}
       DB_URL: postgresql://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform
       APP_DOMAIN: ${APP_DOMAIN:-localhost}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      WOODPECKER_DB_URL: postgresql://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/woodpecker
-      WOODPECKER_HOOK_HOST: http://woodpecker-server:8000
-      GITEA_EXTERNAL_URL: http://${DS1_HOST:-localhost}:3000
+      JWT_SECRET: ${JWT_SECRET:-changeme-set-in-env}
+      INVITE_CODE: ${INVITE_CODE:-}
+      INTAKE_URL: http://intake:8001
     depends_on:
-      ollama:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-      coder:
+      gitea-init:
+        condition: service_completed_successfully
+      intake:
         condition: service_healthy
-      designer:
-        condition: service_healthy
-      tester:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.orchestrator.rule=PathPrefix(`/`)"
-      - "traefik.http.routers.orchestrator.entrypoints=web"
-      - "traefik.http.services.orchestrator.loadbalancer.server.port=8000"
+      - "traefik.http.routers.gateway.rule=Host(`api.${APP_DOMAIN:-localhost}`) || PathPrefix(`/api/`) || PathPrefix(`/auth/`) || PathPrefix(`/chat`) || PathPrefix(`/me`) || PathPrefix(`/register`) || PathPrefix(`/verify`) || PathPrefix(`/apps`) || PathPrefix(`/runs`) || PathPrefix(`/health`)"
+      - "traefik.http.routers.gateway.entrypoints=web"
+      - "traefik.http.services.gateway.loadbalancer.server.port=8000"
     networks:
       - platform
 
-  monitor:
-    build: ./agents/monitor
+  portal:
+    build: ./portal
     environment:
-      ORCHESTRATOR_URL: http://orchestrator:8000
-      MONITOR_POLL_INTERVAL: ${MONITOR_POLL_INTERVAL:-60}
-      MONITOR_COOLDOWN: ${MONITOR_COOLDOWN:-600}
-      MONITOR_LOG_LINES: ${MONITOR_LOG_LINES:-50}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      GATEWAY_URL: http://gateway:8000
     depends_on:
-      ollama:
+      gateway:
         condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - platform
-
-  telegram-bot:
-    build: ./bots/telegram
-    environment:
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      ORCHESTRATOR_URL: http://orchestrator:8000
-      INVITE_CODE: ${INVITE_CODE:-}
-      DB_URL: postgresql://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform
-    depends_on:
-      - orchestrator
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health 2>/dev/null || wget -qO- http://localhost:3032 > /dev/null 2>&1 && echo ok || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portal.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.portal.entrypoints=web"
+      - "traefik.http.services.portal.loadbalancer.server.port=3032"
     networks:
       - platform
 

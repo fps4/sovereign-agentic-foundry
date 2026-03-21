@@ -18,7 +18,17 @@ output:
     - requirements.txt (Python) or package.json (Node)
     - Dockerfile — non-root user, pinned base image (no :latest)
     - .woodpecker.yml — must include generate-tests step before test step
-    - README.md — one paragraph description + API table
+    - README.md — six sections: Overview, Access, API reference, Data model, Environment variables, Usage notes
+    - docs/api.md — expanded API reference with request/response examples (connector and assistant types only)
+    - docs/data-ingestion.md — document upload and indexing guide (assistant type only)
+
+  readme_sections:
+    - Overview: one paragraph description from the spec
+    - Access: live URL at {name}.APP_DOMAIN and Gitea repo link
+    - API reference: table of all routes (method, path, description, auth required)
+    - Data model: entities and fields — omit for dashboard type
+    - Environment variables: table of all env vars (name, purpose, required)
+    - Usage notes: operator-facing instructions specific to this app type
 
 ci_pipeline:
   generate_tests_step: required — calls tester agent before running pytest

@@ -100,8 +100,10 @@ The test-writer agent has no direct database access.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `OLLAMA_MODEL` | `llama3.1:8b` | Model for test generation |
-| `OLLAMA_URL` | `http://ollama:11434` | |
+| `TEST_WRITER_LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
+| `TEST_WRITER_LLM_MODEL` | provider default | Model name. Defaults: `llama3.1:8b` (ollama), `gpt-4o` (openai), `claude-sonnet-4-6` (anthropic) |
+| `TEST_WRITER_LLM_API_KEY` | — | API key for the chosen provider. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Required when provider ≠ `ollama` |
+| `OLLAMA_URL` | `http://ollama:11434` | Used only when `TEST_WRITER_LLM_PROVIDER=ollama` |
 | `GITEA_URL` | — | Internal Gitea base URL |
 | `GITEA_ADMIN_USER` / `GITEA_ADMIN_PASS` | — | Gitea API credentials for fetching source |
 

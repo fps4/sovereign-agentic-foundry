@@ -135,8 +135,10 @@ The builder agent has no direct database access. It does not read or write any P
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `OLLAMA_MODEL` | `llama3.1:8b` | Model for code generation (`qwen2.5-coder:32b` recommended when VRAM allows) |
-| `OLLAMA_URL` | `http://ollama:11434` | |
+| `BUILDER_LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
+| `BUILDER_LLM_MODEL` | provider default | Model name. Defaults: `llama3.1:8b` (ollama), `gpt-4o` (openai), `claude-sonnet-4-6` (anthropic). `qwen2.5-coder:32b` recommended when using Ollama with sufficient VRAM |
+| `BUILDER_LLM_API_KEY` | — | API key for the chosen provider. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Required when provider ≠ `ollama` |
+| `OLLAMA_URL` | `http://ollama:11434` | Used only when `BUILDER_LLM_PROVIDER=ollama` |
 | `STANDARDS_PATH` | `/standards` | Mount path for YAML standards files injected into the generation prompt |
 
 ## Known limitations

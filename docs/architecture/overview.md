@@ -9,6 +9,7 @@ related:
   - docs/architecture/components/generated-app.md
   - docs/architecture/decisions/0001-workflow-orchestration.md
   - docs/architecture/decisions/0002-kanban-board-integration.md
+  - docs/architecture/decisions/0006-per-agent-llm-provider-configuration.md
 ---
 
 ## Purpose
@@ -142,7 +143,7 @@ Watchdog → Docker socket (polls app containers) → Gateway /report-issue
 |-----------|-----------|------|
 | `traefik` | Traefik v3 | Reverse proxy. Routes `*.APP_DOMAIN` to both platform services and deployed app containers via dynamic Docker labels. |
 | `postgres` | PostgreSQL 16 | Shared database for platform state (`platform` DB), Woodpecker CI state (`woodpecker` DB), and per-app databases (each in its own named DB). |
-| `ollama` | Ollama | Local LLM inference for all agents. Default model: `llama3.1:8b`. |
+| `ollama` | Ollama | Local LLM inference. Default provider for all agents (`llama3.1:8b`). Each agent can be independently redirected to OpenAI or Anthropic via per-agent env vars — see `docs/architecture/decisions/0006-per-agent-llm-provider-configuration.md`. |
 | `gitea` | Gitea | Self-hosted Git. One private org per user. One repo per app. |
 | `woodpecker-server` | Woodpecker CI v3 | CI server and web UI. Manages pipeline execution. |
 | `woodpecker-agent` | Woodpecker CI v3 | CI runner. Executes pipeline steps in Docker containers on the platform network. |

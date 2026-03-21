@@ -99,8 +99,10 @@ The reviewer agent has no direct database access.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `OLLAMA_MODEL` | `llama3.1:8b` | Model for semantic review |
-| `OLLAMA_URL` | `http://ollama:11434` | |
+| `REVIEWER_LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
+| `REVIEWER_LLM_MODEL` | provider default | Model name. Defaults: `llama3.1:8b` (ollama), `gpt-4o` (openai), `claude-sonnet-4-6` (anthropic) |
+| `REVIEWER_LLM_API_KEY` | — | API key for the chosen provider. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Required when provider ≠ `ollama` |
+| `OLLAMA_URL` | `http://ollama:11434` | Used only when `REVIEWER_LLM_PROVIDER=ollama` |
 | `STANDARDS_PATH` | `/standards` | Mount path; reviewer loads all YAML files at startup |
 
 ## Known limitations

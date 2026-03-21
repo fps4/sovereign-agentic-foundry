@@ -104,8 +104,10 @@ The UI designer agent has no direct database access. It does not read or write a
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `OLLAMA_MODEL` | `llama3.1:8b` | Model for template generation |
-| `OLLAMA_URL` | `http://ollama:11434` | |
+| `UI_DESIGNER_LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
+| `UI_DESIGNER_LLM_MODEL` | provider default | Model name. Defaults: `llama3.1:8b` (ollama), `gpt-4o` (openai), `claude-sonnet-4-6` (anthropic) |
+| `UI_DESIGNER_LLM_API_KEY` | — | API key for the chosen provider. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Required when provider ≠ `ollama` |
+| `OLLAMA_URL` | `http://ollama:11434` | Used only when `UI_DESIGNER_LLM_PROVIDER=ollama` |
 | `STANDARDS_PATH` | `/standards` | Mount path; expects `ui-standards.yaml` alongside existing YAML files |
 
 ## Known limitations

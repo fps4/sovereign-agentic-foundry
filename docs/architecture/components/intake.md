@@ -96,8 +96,10 @@ The intake agent does not read or write `apps`, `agent_runs`, or `board_cards`. 
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `OLLAMA_MODEL` | `llama3.1:8b` | Model for clarification and spec extraction |
-| `OLLAMA_URL` | `http://ollama:11434` | |
+| `INTAKE_LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
+| `INTAKE_LLM_MODEL` | provider default | Model name. Defaults: `llama3.1:8b` (ollama), `gpt-4o` (openai), `claude-sonnet-4-6` (anthropic) |
+| `INTAKE_LLM_API_KEY` | — | API key for the chosen provider. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Required when provider ≠ `ollama` |
+| `OLLAMA_URL` | `http://ollama:11434` | Used only when `INTAKE_LLM_PROVIDER=ollama` |
 | `DATABASE_URL` | — | asyncpg DSN for message history |
 | `STANDARDS_PATH` | `/standards` | Mount path for YAML standards files |
 

@@ -105,8 +105,10 @@ The watchdog has no exposed port. It runs as a background process only.
 | `WATCHDOG_COOLDOWN` | `600` | Seconds before re-checking the same container after an alert |
 | `WATCHDOG_LOG_LINES` | `50` | Log lines sampled per container per poll |
 | `ORCHESTRATOR_URL` | `http://gateway:8000` | Gateway base URL |
-| `OLLAMA_MODEL` | `llama3.1:8b` | Model for log summarisation |
-| `OLLAMA_URL` | `http://ollama:11434` | |
+| `WATCHDOG_LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
+| `WATCHDOG_LLM_MODEL` | provider default | Model name. Defaults: `llama3.1:8b` (ollama), `gpt-4o` (openai), `claude-sonnet-4-6` (anthropic) |
+| `WATCHDOG_LLM_API_KEY` | — | API key for the chosen provider. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Required when provider ≠ `ollama` |
+| `OLLAMA_URL` | `http://ollama:11434` | Used only when `WATCHDOG_LLM_PROVIDER=ollama` |
 
 ## Known limitations
 

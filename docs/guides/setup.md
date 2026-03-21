@@ -6,6 +6,7 @@ owners: [platform-team]
 related:
   - docs/guides/deployment.md
   - docs/architecture/overview.md
+  - docs/architecture/decisions/0006-per-agent-llm-provider-configuration.md
 ---
 
 ## Purpose
@@ -36,7 +37,37 @@ Set the required variables in `.env`:
 | `APP_DOMAIN` | Public domain for app URLs (e.g. `apps.example.com`) |
 | `GITEA_ADMIN_PASS` | Password for the auto-created Gitea admin account |
 
-### 2. Pull the Ollama model
+### 2. (Optional) Configure commercial LLM providers
+
+By default every agent uses Ollama. To route individual agents to OpenAI or Anthropic, add the corresponding variables to `.env`.
+
+**Global API keys** (shared across any agent that uses that provider):
+
+```
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**Per-agent overrides** — set any combination:
+
+```
+# Example: planner and builder use Claude; everything else stays on Ollama
+PLANNER_LLM_PROVIDER=anthropic
+BUILDER_LLM_PROVIDER=anthropic
+
+# Example: override model for a specific agent
+BUILDER_LLM_MODEL=claude-opus-4-6
+```
+
+Available agents and their prefixes: `INTAKE`, `PLANNER`, `BUILDER`, `UI_DESIGNER`, `REVIEWER`, `TEST_WRITER`, `REMEDIATION`, `WATCHDOG`.
+
+Each prefix supports three vars: `{PREFIX}_LLM_PROVIDER` (`ollama` / `openai` / `anthropic`), `{PREFIX}_LLM_MODEL`, `{PREFIX}_LLM_API_KEY`.
+
+See `docs/architecture/decisions/0006-per-agent-llm-provider-configuration.md` for provider default models, the key lookup order, and recommended per-agent provider choices.
+
+> **Privacy note:** agents configured with a commercial provider send prompt content (including app descriptions and generated source code) to that provider's API.
+
+### 3. Pull the Ollama model
 
 ```bash
 DOCKER_HOST=ssh://ds1 ./scripts/pull_models.sh

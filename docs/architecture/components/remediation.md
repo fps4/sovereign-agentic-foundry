@@ -122,8 +122,10 @@ The remediation agent has no direct database access. Retry state is tracked via 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `MAX_RETRIES` | `3` | Maximum automated repair attempts per error hash before escalation |
-| `OLLAMA_MODEL` | `llama3.1:8b` | Model for error analysis and escalation summaries |
-| `OLLAMA_URL` | `http://ollama:11434` | |
+| `REMEDIATION_LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `openai`, `anthropic` |
+| `REMEDIATION_LLM_MODEL` | provider default | Model name. Defaults: `llama3.1:8b` (ollama), `gpt-4o` (openai), `claude-sonnet-4-6` (anthropic) |
+| `REMEDIATION_LLM_API_KEY` | — | API key for the chosen provider. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`. Required when provider ≠ `ollama` |
+| `OLLAMA_URL` | `http://ollama:11434` | Used only when `REMEDIATION_LLM_PROVIDER=ollama` |
 | `GITEA_URL` | — | Internal Gitea base URL for fetching source |
 | `GITEA_ADMIN_USER` / `GITEA_ADMIN_PASS` | — | Gitea API credentials |
 | `ORCHESTRATOR_URL` | `http://gateway:8000` | Gateway base URL |

@@ -6,27 +6,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sovereign Agentic Foundry is a self-hosted AI platform that turns natural-language Telegram messages into deployed web apps. A user describes what they want; the system designs, codes, tests, and deploys it fully automatically — no human approval gates.
 
-The full stack runs via a single `docker-compose.yml` and supports remote Docker hosts via SSH.
+The full stack runs via `infra/docker/docker-compose.yml` and supports remote Docker hosts via SSH.
+A `Makefile` at the repo root wraps all common operations.
 
 ## Development Commands
 
 ```bash
-# Start the full stack (locally or via SSH remote host)
-docker compose up -d
-DOCKER_HOST=ssh://ds1 docker compose up -d
+# Start the full stack (local)
+make up
+
+# Start / deploy on remote host ds1
+make up HOST=ssh://ds1
+make deploy HOST=ssh://ds1          # build + up
 
 # Pull Ollama LLM models on first run
-bash scripts/pull_models.sh
+make pull-models HOST=ssh://ds1
 
-# Run end-to-end tests (requires running stack)
-ORCHESTRATOR_URL=http://localhost:8000 python scripts/e2e_test.py
+# Run integration tests
+make test HOST=ssh://ds1 GATEWAY_URL=http://ds1 INVITE_CODE=674523
+make test-registration HOST=ssh://ds1 GATEWAY_URL=http://ds1 INVITE_CODE=674523
+make test-chat         HOST=ssh://ds1 GATEWAY_URL=http://ds1 INVITE_CODE=674523
 
 # View logs for a specific service
-docker compose logs -f designer
-docker compose logs -f orchestrator
+make logs svc=gateway HOST=ssh://ds1
 
 # Rebuild a single service after code changes
-docker compose build coder && docker compose up -d coder
+make build svc=portal HOST=ssh://ds1 && make up HOST=ssh://ds1
+
+# Direct docker compose (compose file is at infra/docker/docker-compose.yml)
+DOCKER_HOST=ssh://ds1 docker compose -f infra/docker/docker-compose.yml --project-directory . ps
 ```
 
 ## Architecture Overview

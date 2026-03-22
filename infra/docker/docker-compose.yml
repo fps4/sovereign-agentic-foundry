@@ -27,7 +27,6 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./infra/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U platform"]
       interval: 5s
@@ -112,7 +111,7 @@ services:
       WOODPECKER_AGENT_SECRET: ${WOODPECKER_AGENT_SECRET:-changeme}
       WOODPECKER_HOST: "http://${DS1_HOST:-localhost}:8080"
       WOODPECKER_DATABASE_DRIVER: postgres
-      WOODPECKER_DATABASE_DATASOURCE: "postgres://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/woodpecker?sslmode=disable"
+      WOODPECKER_DATABASE_DATASOURCE: "postgres://platform:${POSTGRES_PASSWORD:-changeme}@postgres:5432/platform?sslmode=disable"
       WOODPECKER_ENVIRONMENT: "DS1_HOST,APP_DOMAIN"
       DS1_HOST: ${DS1_HOST:-localhost}
       APP_DOMAIN: ${APP_DOMAIN:-localhost}
@@ -190,7 +189,10 @@ services:
       - platform
 
   portal:
-    build: ./portal
+    build:
+      context: ./portal
+      args:
+        NEXT_PUBLIC_SERVER_URL: ""
     environment:
       GATEWAY_URL: http://gateway:8000
     depends_on:

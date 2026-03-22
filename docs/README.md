@@ -62,6 +62,7 @@
 | [`architecture/decisions/0003-tenant-model.md`](architecture/decisions/0003-tenant-model.md) | ADR-0003: Introduce tenant as the primary scoping unit |
 | [`architecture/decisions/0004-tenant-infra-layer.md`](architecture/decisions/0004-tenant-infra-layer.md) | ADR-0004: Per-tenant database infrastructure layer |
 | [`architecture/decisions/0005-template-library.md`](architecture/decisions/0005-template-library.md) | ADR-0005: Template library for generated app scaffolding |
+| [`architecture/decisions/0008-agent-quality-testing-strategy.md`](architecture/decisions/0008-agent-quality-testing-strategy.md) | ADR-0008: Three-layer quality testing strategy for platform agents |
 
 ## Guides
 

@@ -1,0 +1,52 @@
+role: infra
+
+summary: >
+  Provision and manage infrastructure resources for the tenant tier. Operates at two
+  levels: tenant-level (Postgres and MongoDB containers, one per tenant per type,
+  long-lived and shared across apps) and app-level (per-app database and scoped user
+  within the tenant container, created per build). Not involved when the app uses SQLite.
+
+behaviour:
+  - Check tenant_resources before starting a container (idempotent)
+  - Start tenant container if it does not exist; wait for readiness with backoff (max TENANT_CONTAINER_READY_TIMEOUT seconds)
+  - For Postgres: enable pgvector extension (CREATE EXTENSION IF NOT EXISTS vector) on first start
+  - Create per-app database {app-name} and scoped user {app-name}-user in the tenant container
+  - Generate credentials; write DSN to .env.platform in the app's Gitea repo
+  - Record in tenant_resources (container metadata) and app_resources (per-app DB metadata)
+  - Teardown: drop per-app database and user; delete .env.platform; do NOT remove the tenant container
+  - Tenant teardown (all apps deleted): stop and remove tenant containers; clear tenant_resources
+  - Operation is idempotent: calling provision twice skips container creation and rewrites the same secrets
+
+tenant_containers:
+  postgres: tenant-{tenant_id}-postgres (pgvector/pgvector image, pinned)
+  mongo: tenant-{tenant_id}-mongo (mongo image, pinned)
+
+network: all tenant containers join the platform_platform Docker network
+
+do_not:
+  - Manage application container lifecycle (Woodpecker CI and Traefik own that)
+  - Generate CI pipeline configuration (builder's job)
+  - Manage platform-level infrastructure (platform Postgres, Gitea, Woodpecker — fixed)
+  - Perform database backups or restores
+
+calls:
+  - Docker socket (start/stop containers, check health)
+  - Tenant Postgres admin connection (create/drop per-app databases and users)
+  - Tenant MongoDB admin connection (create/drop per-app databases and users)
+  - Gitea HTTP API (write .env.platform secrets)
+
+endpoints:
+  - POST /provision   # provision tenant infra (if needed) and per-app database; called by gateway during build
+  - POST /teardown    # drop per-app database and secrets; called by gateway on app deletion
+  - GET  /health
+
+config:
+  - DOCKER_HOST                        # unix socket or SSH remote host
+  - PLATFORM_NETWORK                   # platform_platform
+  - POSTGRES_ADMIN_PASSWORD            # password for tenant Postgres container
+  - MONGO_ADMIN_PASSWORD               # password for tenant MongoDB container
+  - GITEA_URL
+  - GITEA_ADMIN_USER
+  - GITEA_ADMIN_PASS
+  - TENANT_CONTAINER_READY_TIMEOUT     # 60
+  - DATABASE_URL                       # platform Postgres for tenant_resources and app_resources

@@ -2,4 +2,5 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.9
 httpx>=0.27
-python-json-logger>=2.0
+tenacity>=8.2
+agentic-standards[litellm]>=0.1

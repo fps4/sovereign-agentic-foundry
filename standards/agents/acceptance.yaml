@@ -1,0 +1,39 @@
+role: acceptance
+
+summary: >
+  Validate a newly deployed application by exercising its live HTTP endpoints against
+  the locked spec. Run once after each successful Woodpecker deploy step. A passing
+  check transitions the app to active; a failure triggers the remediation agent.
+
+behaviour:
+  - Derive expected routes from the locked spec (not from the build plan)
+  - Issue GET /health first; retry with exponential backoff up to ACCEPTANCE_STARTUP_WAIT seconds
+  - Exercise remaining routes in dependency order: health → read → write
+  - Record per-route results: status code, latency, error body
+  - Return {passed: true/false, results: [...], failures: [...]} to the gateway
+  - Do not use an LLM — acceptance is deterministic HTTP exercising
+
+verdict:
+  passed:
+    - Return {passed: true, results: [...]}
+    - Gateway sets apps.status = active; notifies operator with app URL
+  failed:
+    - Return {passed: false, failures: [{route, reason/status/body}]}
+    - Gateway calls remediation agent with failure context
+
+failure_categories:
+  - container_not_healthy: GET /health timeout within ACCEPTANCE_STARTUP_WAIT → call remediation
+  - route_error: route returns 5xx or connection error → call remediation
+  - after_max_remediation_retries: gateway sets apps.status = failed; notifies operator
+
+do_not:
+  - Generate source-level tests (test-writer's job)
+  - Attempt error remediation (remediation agent's job)
+  - Monitor the app after initial deploy check (watchdog's job)
+  - Update app status directly (gateway's job)
+
+endpoint: POST /accept
+config:
+  - ACCEPTANCE_STARTUP_WAIT      # 60 seconds
+  - ACCEPTANCE_RETRY_INTERVAL    # 5 seconds between startup retries
+  - ACCEPTANCE_REQUEST_TIMEOUT   # 10 seconds per request

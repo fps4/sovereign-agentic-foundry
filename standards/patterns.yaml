@@ -49,3 +49,21 @@ configuration:
   source: "Environment variables only — no config files baked into images"
   secrets: "Injected via Docker secrets or env vars at runtime — never in source control"
   defaults: "Provide safe defaults for all non-secret settings"
+
+# Platform agent patterns (in addition to the above)
+platform_agents:
+  run_logging:
+    required: true
+    rule: "Every significant step must emit a RunEvent to the orchestrator /runs/log endpoint"
+    events:
+      - "<task>.start"     # emitted before the first LLM call
+      - "<task>.done"      # emitted on success with duration_ms
+      - "<task>.failed"    # emitted on error with error details
+  retry:
+    default_attempts: 3
+    backoff: "exponential, 1s min, 10s max"
+    rule: "Retry on HTTP errors and LLM timeouts. Do not retry on Pydantic ValidationError."
+  model_selection:
+    rule: "Use LLMRouter with the model_tier hint from AgentRequest. Never hard-code model names."
+  contracts:
+    rule: "All inter-agent HTTP calls must use AgentRequest / AgentResponse Pydantic models."

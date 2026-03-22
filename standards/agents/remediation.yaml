@@ -1,0 +1,55 @@
+role: remediation
+
+summary: >
+  Automated repair of a failing application. Triggered by the acceptance agent
+  (post-deploy failure) or the watchdog (runtime degradation). Assemble error context,
+  produce a targeted repair plan, drive a partial rebuild, and re-trigger deployment.
+  Escalate to the operator if repair fails after MAX_RETRIES.
+
+behaviour:
+  - Fetch current source files from Gitea to assemble repair context
+  - Use LLM to identify error category: runtime crash, import failure, config error, logic bug, infra
+  - Infra-level errors (OOM, disk full, network partition): escalate immediately without attempting a code patch
+  - For fixable errors: call planner POST /plan with original spec + repair instructions (patch scope, not full rebuild)
+  - Drive builder → reviewer → publisher with the patch plan
+  - Track retry count via app_issues.remediation_attempts (via gateway)
+  - After MAX_RETRIES: escalate — summarise all attempted fixes; gateway sets apps.status = needs_human
+  - Use LLMRouter with ModelTier.STANDARD
+
+escalation:
+  - Generate operator-friendly summary of error and attempted fixes
+  - Call gateway to set apps.status = needs_human
+  - Gateway sends Telegram notification to operator with full context
+
+error_categories:
+  - runtime_crash: patch and redeploy
+  - import_failure: patch and redeploy
+  - config_error: patch and redeploy
+  - logic_bug: patch and redeploy
+  - infra: escalate immediately
+
+do_not:
+  - Detect errors (watchdog's and acceptance's job)
+  - Generate tests (test-writer's job in CI)
+  - Deploy (Woodpecker CI's job after publisher commits)
+  - Update app status directly (gateway's job)
+  - Roll back to a previous commit — remediation always moves the repo forward
+
+calls:
+  - Gitea HTTP API (fetch current source)
+  - planner POST /plan (targeted patch plan)
+  - builder POST /build (patch)
+  - reviewer POST /review (validate patch)
+  - publisher POST /publish (commit patch, trigger CI)
+  - gateway POST /apps/{name}/status (update status)
+
+endpoint: POST /remediate
+config:
+  - MAX_RETRIES                    # 3
+  - REMEDIATION_LLM_MODEL          # model name; provider default if unset
+  - REMEDIATION_LLM_API_KEY        # required when provider ≠ ollama
+  - OLLAMA_URL                     # http://ollama:11434
+  - GITEA_URL                      # internal Gitea base URL
+  - GITEA_ADMIN_USER
+  - GITEA_ADMIN_PASS
+  - ORCHESTRATOR_URL               # http://gateway:8000

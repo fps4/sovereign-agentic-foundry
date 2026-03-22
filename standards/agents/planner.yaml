@@ -1,0 +1,51 @@
+role: planner
+
+summary: >
+  Translate a locked AppSpec into a concrete BuildPlan: template selection, database
+  selection, file structure, dependency manifest, external resource requirements, and
+  test targets. Resolve all architectural decisions so the builder can focus on code only.
+
+behaviour:
+  - Read the spec and select the appropriate API template (fastapi-base or express-base)
+  - Determine whether a frontend template (mui-minimal) is required
+  - Select database: sqlite, postgres, mongo, or none — using spec analysis and templates.yaml rules
+  - Produce a complete file list with per-file descriptions for the builder
+  - Declare resource requirements (postgres, mongo) so the gateway can call the infra agent
+  - Include test targets for the test-writer agent
+  - Do not generate code — produce plan descriptions only
+  - Validate LLM output against required BuildPlan fields before returning
+  - Use LLMRouter with ModelTier.STANDARD
+
+output:
+  schema: agentic_standards.contracts.agent_io.BuildPlan
+  required_fields:
+    - template              # fastapi-base or express-base
+    - template_version      # e.g. v1
+    - frontend              # bool
+    - frontend_template     # mui-minimal or null
+    - stack                 # fastapi or express
+    - db                    # sqlite, postgres, mongo, or none
+    - files                 # list of {path, description}
+    - dependencies          # list of library names
+    - routes                # list of {method, path, description}
+    - resources_required    # list: postgres and/or mongo; empty for sqlite/none
+    - test_targets          # list of {route, scenario}
+
+do_not:
+  - Generate code file content (builder's job)
+  - Generate frontend templates (ui-designer's job)
+  - Provision infrastructure (infra agent's job; planner only declares requirements)
+  - Review generated code for standards compliance (reviewer's job)
+  - Override template selection with LLM reasoning — template choice is rule-based from templates.yaml
+
+on_validation_failure:
+  - Retry with a more constrained JSON schema prompt
+  - After MAX_PLAN_RETRIES: return error to gateway; build is aborted
+
+endpoint: POST /plan
+config:
+  - PLANNER_LLM_MODEL      # qwen2.5-coder:32b recommended when using Ollama with VRAM
+  - PLANNER_LLM_API_KEY    # required when provider ≠ ollama
+  - OLLAMA_URL             # http://ollama:11434
+  - STANDARDS_PATH         # /standards
+  - MAX_PLAN_RETRIES       # 2

@@ -1,0 +1,49 @@
+role: builder
+
+summary: >
+  Generate application code files from a BuildPlan produced by the planner. Make no
+  architectural decisions — those are fully resolved in the plan. Augment the selected
+  base template with app-specific routes, models, and business logic only.
+
+behaviour:
+  - Load the API template selected in the build plan from /templates/api/{template_id}/
+  - Send template files + spec + build plan to the LLM with the instruction to add app-specific code only
+  - Protected template files (Dockerfile, logging setup) must not be modified by the LLM
+  - Extract a route manifest from the merged file set for the ui-designer
+  - On reviewer fix loop: regenerate only the LLM-added files; template files pass through unchanged
+  - On LLM parse failure: return the base template file set unchanged (fallback)
+  - Generate README.md and optional docs/ files alongside application code
+  - Use LLMRouter with ModelTier.STANDARD
+
+output:
+  - files: list of {path, content}
+  - routes: list of {method, path, description}  # route manifest for ui-designer
+  - template_used: string  # e.g. "fastapi-base/v1"
+
+documentation_always_generated:
+  - README.md with six sections: Overview, Access, API reference, Data model, Environment variables, Usage notes
+
+documentation_for_connector_and_assistant:
+  - docs/api.md: expanded API reference with request/response examples and error codes
+
+documentation_for_assistant:
+  - docs/data-ingestion.md: how to upload and index documents
+
+do_not:
+  - Make architectural decisions (planner's job)
+  - Generate frontend templates (ui-designer's job)
+  - Commit to Gitea (publisher's job)
+  - Call the reviewer directly (gateway coordinates the review loop)
+  - Modify the Dockerfile or logging setup from the base template
+
+on_llm_failure:
+  - Return the base template file set unchanged
+  - Log fallback to agent_runs with status=warning
+  - Build continues with the minimal template
+
+endpoint: POST /build
+config:
+  - BUILDER_LLM_MODEL      # qwen2.5-coder:32b recommended when using Ollama with VRAM
+  - BUILDER_LLM_API_KEY    # required when provider ≠ ollama
+  - OLLAMA_URL             # http://ollama:11434
+  - STANDARDS_PATH         # /standards

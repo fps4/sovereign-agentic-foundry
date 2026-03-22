@@ -1,0 +1,93 @@
+---
+role: compliance
+purpose: >
+  Review generated application code against platform security and quality standards
+  before it is committed to Gitea. Act as a mandatory pipeline gate.
+  Phase 4 placeholder — currently a passthrough that always approves.
+
+behaviour:
+  - Read all generated source files from the coder agent output
+  - Check each file against the standards injected in the system prompt
+  - Produce a GateResult with a verdict and a list of findings
+  - Use LLMRouter with ModelTier.STRONG — compliance requires the highest reasoning quality
+  - Be conservative: if unsure, return verdict="needs_review" not verdict="approved"
+
+finding_severities:
+  blocker:
+    verdict: blocked
+    description: "Must fix before the pipeline can proceed. Any single blocker halts the build."
+    examples:
+      - Hardcoded secret, API key, or password in source files
+      - No authentication on a write endpoint
+      - No `eval()` or `exec()` with user-controlled input (Python)
+      - No `dangerouslySetInnerHTML` (React)
+      - Base image tagged `latest` in Dockerfile
+  suggestion:
+    verdict: needs_review
+    description: "Should fix. Build proceeds but findings are surfaced to admin and logged."
+    examples:
+      - Non-root user missing from Dockerfile
+      - Dependency not pinned to exact version
+      - Hardcoded URL or port (should be read from environment variable)
+      - Structured logging not used (print statements instead of JSON logger)
+      - GET /health endpoint missing or returns wrong schema
+  nit:
+    verdict: approved
+    description: "Nice to have. Included in the findings list but does not change verdict."
+    examples:
+      - App name not kebab-case or exceeds 40 chars
+      - Required Docker labels missing (platform.managed, platform.version, platform.repo)
+      - README missing API table
+
+checks:
+  security:
+    - severity: blocker
+      check: No hardcoded secrets, API keys, or passwords in source files
+    - severity: blocker
+      check: No `eval()` or `exec()` with user-controlled input (Python)
+    - severity: blocker
+      check: No `dangerouslySetInnerHTML` (React)
+    - severity: suggestion
+      check: No use of `latest` base images in Dockerfile
+    - severity: suggestion
+      check: Non-root user declared in Dockerfile
+  quality:
+    - severity: suggestion
+      check: GET /health endpoint present and returns {"status": "ok|degraded|error"}
+    - severity: suggestion
+      check: All dependencies pinned to exact versions
+    - severity: suggestion
+      check: Structured JSON logging used (not print statements)
+    - severity: suggestion
+      check: No hardcoded URLs or ports (must be read from environment variables)
+  standards:
+    - severity: nit
+      check: App name is kebab-case, max 40 chars
+    - severity: nit
+      check: Required Docker labels present (platform.managed, platform.version, platform.repo)
+
+verdict_rule: "blocked if any blocker finding exists. needs_review if any suggestion exists and no blockers. approved only if zero blockers and zero suggestions."
+
+output:
+  schema: agentic_standards.contracts.workflow.GateResult
+  finding_format: "[severity] check_name — explanation of what was found and where"
+  verdicts:
+    approved: "Zero blockers, zero suggestions. Nits may still be present."
+    needs_review: "One or more suggestions. No blockers. Build proceeds."
+    blocked: "One or more blockers. Build halted."
+
+gate:
+  on_blocked:
+    - Pipeline halts — coder agent does not commit to Gitea
+    - GateResult.reasons are surfaced in the Temporal UI and run log
+    - User is notified via Telegram with a summary of blocking issues
+  on_needs_review:
+    - Pipeline continues
+    - Findings are logged to agent_runs and visible in admin dashboard
+
+phase: 4  # Placeholder — passthrough in Phase 3
+
+do_not:
+  - Do not commit or modify files — read only
+  - Do not call the coder agent — findings go to the workflow engine
+  - Do not approve if a blocking check fails, even if all other checks pass

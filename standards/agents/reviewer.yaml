@@ -1,0 +1,42 @@
+role: reviewer
+
+summary: >
+  Standards quality gate. Check all generated files — backend code from the builder
+  and frontend templates from the ui-designer — against the platform standards YAML
+  files before any commit to Gitea. Return either a pass (proceed to publisher) or
+  structured fix instructions (return to builder for correction).
+
+behaviour:
+  - Run static checks from naming.yaml, security.yaml, patterns.yaml, and ui-standards.yaml
+  - Run LLM-assisted semantic review for issues not catchable by static rules
+  - Return structured fix instructions: {file, issue, fix_instruction}
+  - On LLM returning unparseable verdict: treat as pass with warning log (avoid blocking on reviewer instability)
+  - Use LLMRouter with ModelTier.STANDARD
+
+verdict:
+  passed:
+    - Return GateResult(gate="reviewer", verdict="approved")
+    - Gateway proceeds to publisher
+  blocked:
+    - Return GateResult(gate="reviewer", verdict="blocked", reasons=[...])
+    - Each reason must be {file, issue, fix_instruction}
+    - Gateway sends fix_instructions to builder; calls reviewer again on updated files
+    - Bounded by MAX_REVIEWER_RETRIES in the gateway
+
+static_checks:
+  - naming.yaml: service names, env var format, DB object casing
+  - security.yaml: base image pinning, non-root Dockerfile user, no hardcoded secrets, required Docker labels
+  - patterns.yaml: health endpoint present, structured JSON logging, graceful shutdown
+
+do_not:
+  - Generate code (builder's job)
+  - Run pytest (CI's job)
+  - Commit to Gitea (publisher's job)
+  - Block the pipeline on LLM reviewer instability (static checks are authoritative; LLM review is advisory)
+
+endpoint: POST /review
+config:
+  - REVIEWER_LLM_MODEL      # model name; provider default if unset
+  - REVIEWER_LLM_API_KEY    # required when provider ≠ ollama
+  - OLLAMA_URL              # http://ollama:11434
+  - STANDARDS_PATH          # /standards; reviewer loads all YAML files at startup

@@ -1,0 +1,73 @@
+---
+# Reliability standards for platform agents and platform-built services
+
+slos:
+  definition: "count(good_events) / count(total_events) over a 30-day rolling window"
+  required: true
+  rule: "Every HTTP service must define at least availability and latency SLOs before going to production"
+
+  templates:
+    availability:
+      sli: "count(status < 500) / count(total_requests)"
+      target: 99.9%
+      note: "Raise to 99.95% for user-facing services"
+    latency:
+      sli: "count(duration < threshold) / count(total_requests)"
+      targets:
+        p95: 500ms   # agent LLM calls
+        p99: 2000ms  # agent LLM calls
+        p95: 100ms   # non-LLM HTTP handlers
+      note: "Measure success latency and error latency separately"
+
+  burn_rate_alerts:
+    critical:
+      short_window: 5m
+      long_window: 1h
+      factor: 14.4x
+      action: "Page on-call immediately"
+    warning:
+      short_window: 30m
+      long_window: 6h
+      factor: 6x
+      action: "Notify team, investigate"
+
+  error_budget:
+    rule: "If error budget > 50% consumed with > 50% of window remaining, halt non-critical feature work"
+    tracking: "Error budget burn rate must be visible in the admin dashboard"
+
+golden_signals:
+  latency:
+    description: "Duration of requests — track success and error latency separately"
+    rule: "Never average latency — use p50, p95, p99 percentiles"
+  traffic:
+    description: "Request rate or throughput — requests per second, events per minute"
+  errors:
+    description: "Error rate by type: 5xx, timeout, business logic failures"
+    rule: "Distinguish platform errors (agent bug) from expected errors (bad user input)"
+  saturation:
+    description: "How full is the most constrained resource — CPU, memory, queue depth, LLM concurrency"
+    rule: "Alert before saturation, not after — set thresholds at 80% of capacity"
+
+incident_response:
+  severity_by_slo_impact:
+    sev1: "SLO breach imminent or active (error budget burning at > 14x rate)"
+    sev2: "Error budget burning at > 6x rate, degraded user experience"
+    sev3: "Elevated error rate but within budget, no user impact"
+  rules:
+    - "Severity is determined by SLO impact, not by gut feeling or team pressure"
+    - "Every incident must produce a blameless post-incident review"
+    - "Post-incident actions must be tracked to completion — not just written down"
+  mttr_target: "< 30 minutes for Sev1, < 4 hours for Sev2"
+
+platform_agent_reliability:
+  health_check_contract:
+    liveness: "GET /health → {status: ok|degraded|error} — must respond within 2s"
+    degraded: "Agent is running but a dependency (Ollama, external API) is unavailable"
+    error: "Agent cannot serve requests — will be removed from rotation"
+  retry_on_degraded:
+    rule: "If an agent returns status=degraded, the workflow engine retries after backoff"
+    max_retries: 3
+    backoff: "exponential, 2s base, 30s max"
+  llm_failure_handling:
+    rule: "LLM timeout or malformed JSON output is a retryable error, not a fatal one"
+    fallback: "After max_retries, emit RunEvent status=error and surface to admin — do not silently drop"

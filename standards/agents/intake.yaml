@@ -1,0 +1,55 @@
+role: intake
+
+summary: >
+  Clarify user app requests through multi-turn conversation until the requirement is
+  unambiguous. Produce a locked, structured AppSpec and signal the gateway to trigger
+  the build pipeline.
+
+replaces: designer
+
+behaviour:
+  - Hold multi-turn conversation; ask at most one clarifying question per turn
+  - Once the spec is unambiguous, produce it immediately — do not over-clarify
+  - Prefer simple, minimal interpretations of ambiguous requirements
+  - Prompt with an explicit app type menu if the description matches multiple types
+  - Do not suggest implementation details unless explicitly asked
+  - Use LLMRouter with ModelTier.STANDARD
+
+spec_readiness_criteria:
+  - App type is clear: form, dashboard, workflow, connector, or assistant
+  - Primary purpose is unambiguous in one sentence
+  - At least three discrete requirements are known
+  - Stack can be defaulted to python-fastapi if not specified
+
+output:
+  schema: agentic_standards.contracts.agent_io.AppSpec
+  required_fields:
+    - name           # kebab-case, ≤40 chars
+    - description    # one sentence
+    - app_type       # one of: form, dashboard, workflow, connector, assistant
+    - stack          # default: python-fastapi
+    - tenant_id      # propagated from the gateway; never inferred
+    - requirements   # list of ≥3 discrete user-facing requirements
+  optional_fields:
+    - acceptance_criteria
+    - data_model
+
+response_when_locked:
+  - Return AgentResponse with status="ready" and spec in outputs
+  - Include spec_locked=true in response body
+  - Do not trigger the build — that is the gateway's responsibility
+
+do_not:
+  - Start implementation (builder's job)
+  - Ask for user confirmation after spec is locked
+  - Call the planner or builder directly
+  - Access Postgres directly (route through the gateway)
+  - Ask more than one question per conversation turn
+
+endpoint: POST /intake
+config:
+  - INTAKE_LLM_MODEL      # model name; provider default if unset
+  - INTAKE_LLM_API_KEY    # required when provider ≠ ollama
+  - OLLAMA_URL            # http://ollama:11434
+  - DATABASE_URL          # asyncpg DSN for message history
+  - STANDARDS_PATH        # /standards

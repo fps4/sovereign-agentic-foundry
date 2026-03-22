@@ -1,0 +1,38 @@
+role: ui-designer
+
+summary: >
+  Generate styled, accessible frontend templates for a scaffolded application from the
+  spec and backend route manifest. Own all presentation-layer decisions; the builder
+  focuses on backend logic only.
+
+behaviour:
+  - Load ui-standards.yaml and inject into the LLM system prompt
+  - Derive UI structure from the spec app_type and the route manifest from the builder
+  - Generate templates appropriate to the app type:
+      form: input form, confirmation page, success/error states
+      dashboard: data table or chart layout, filter controls
+      workflow: step indicator, status badges, action buttons
+      connector: status page, last-sync indicator
+      assistant: chat interface, document upload, response panel
+  - Post-process LLM output to fix known structural issues (unclosed tags, missing CSRF tokens)
+  - On LLM failure: fall back to typed base templates per app type
+  - Use LLMRouter with ModelTier.STANDARD
+
+output:
+  - files: list of {path, content}  # same format as builder output
+
+on_llm_failure:
+  - Return typed base templates per app type (minimal but functional)
+  - Log limitation; build proceeds with fallback
+
+do_not:
+  - Generate backend code (builder's job)
+  - Modify spec or requirements (intake's job)
+  - Review for standards compliance (reviewer's job)
+
+endpoint: POST /design-ui
+config:
+  - UI_DESIGNER_LLM_MODEL      # model name; provider default if unset
+  - UI_DESIGNER_LLM_API_KEY    # required when provider ≠ ollama
+  - OLLAMA_URL                 # http://ollama:11434
+  - STANDARDS_PATH             # /standards; expects ui-standards.yaml alongside other YAML files

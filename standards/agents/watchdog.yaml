@@ -1,0 +1,47 @@
+role: watchdog
+
+summary: >
+  Continuously monitor all running application containers for log errors and health
+  failures. Report each new unique error to the gateway. For breaking errors the gateway
+  triggers remediation; for non-breaking errors the gateway creates a Gitea issue and
+  notifies the operator. No HTTP server — runs as a background polling loop only.
+
+replaces: monitor
+
+behaviour:
+  - Every WATCHDOG_POLL_INTERVAL seconds: list all running containers on the platform network
+  - For each container: fetch the last WATCHDOG_LOG_LINES log lines
+  - Apply regex patterns to detect error-level log entries
+  - Normalise and hash the error text (MD5 of normalised text)
+  - Call gateway POST /apps/{name}/report-issue with {error_hash, summary, is_breaking, logs}
+  - Use LLM (ModelTier.FAST) to generate a human-readable issue title and body for the gateway
+  - On Ollama unavailable: send raw log excerpt as summary without LLM summarisation
+  - Apply WATCHDOG_COOLDOWN before re-checking the same container after an alert
+  - Container in unhealthy or exited state: always treat as breaking regardless of log content
+
+deduplication:
+  - Gateway checks app_issues for duplicate hash; skips if already recorded
+  - Watchdog does not track state locally — all deduplication is delegated to the gateway
+
+do_not:
+  - Attempt error remediation (remediation agent's job)
+  - Create Gitea issues directly (gateway's job)
+  - Update app status directly (gateway's job)
+  - Expose an HTTP server or port
+  - Access the platform Postgres database directly
+
+no_http_server: true
+
+calls:
+  - Docker socket (read-only): container list, logs, health state
+  - gateway POST /apps/{name}/report-issue
+  - Ollama HTTP API (LLM summarisation, ModelTier.FAST)
+
+config:
+  - WATCHDOG_POLL_INTERVAL     # 60 seconds
+  - WATCHDOG_COOLDOWN          # 600 seconds before re-checking same container
+  - WATCHDOG_LOG_LINES         # 50 log lines per container per poll
+  - ORCHESTRATOR_URL           # http://gateway:8000
+  - WATCHDOG_LLM_MODEL         # model name; provider default if unset
+  - WATCHDOG_LLM_API_KEY       # required when provider ≠ ollama
+  - OLLAMA_URL                 # http://ollama:11434

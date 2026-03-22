@@ -1,7 +1,8 @@
 ---
 title: "0006: Per-agent LLM provider and model configuration"
-status: accepted
+status: superseded
 date: 2026-03-21
+superseded_by: docs/architecture/decisions/0007-litellm-provider-abstraction.md
 related:
   - docs/architecture/overview.md
   - docs/architecture/decisions/0001-workflow-orchestration.md

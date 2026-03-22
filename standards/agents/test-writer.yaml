@@ -1,0 +1,43 @@
+role: test-writer
+
+summary: >
+  Generate pytest test files for a scaffolded application. Runs as the first step of
+  the Woodpecker CI pipeline (generate-tests step), not as a gateway-dispatched service.
+  Generated tests are executed by the subsequent test CI step; failing tests block deployment.
+
+replaces: tester
+
+behaviour:
+  - Fetch app source files from Gitea via HTTP API
+  - Generate pytest files from source, guided by the test_targets in the build plan
+  - Auto-correct known LLM import mistakes (e.g. wrong TestClient path)
+  - Write test files to the Woodpecker CI workspace (/workspace/tests/)
+  - On LLM failure: write a minimal health-check test (GET /health asserts 200)
+  - Use LLMRouter with ModelTier.STANDARD
+
+output:
+  - Test files written to /workspace/tests/ in the CI workspace (not returned in response body)
+  - Return {files_written: [...]} to the CI step
+
+ci_integration:
+  - Called exclusively as a Woodpecker CI step (generate-tests), not by the gateway
+  - The subsequent test step runs: pip install -r requirements.txt && pytest
+  - Failing pytest blocks docker-build and deploy steps
+
+on_llm_failure:
+  - Write minimal health-check test: imports app, calls /health, asserts 200
+  - CI step succeeds with fallback; functional coverage is degraded
+
+do_not:
+  - Run tests (CI pytest step does this)
+  - Commit test files to Gitea (they are written to CI workspace only)
+  - Modify application source code (builder's job)
+
+endpoint: POST /generate
+config:
+  - TEST_WRITER_LLM_MODEL      # model name; provider default if unset
+  - TEST_WRITER_LLM_API_KEY    # required when provider ≠ ollama
+  - OLLAMA_URL                 # http://ollama:11434
+  - GITEA_URL                  # internal Gitea base URL
+  - GITEA_ADMIN_USER           # Gitea API credentials for fetching source
+  - GITEA_ADMIN_PASS

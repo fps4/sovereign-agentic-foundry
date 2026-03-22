@@ -135,29 +135,35 @@ async def _migrate() -> None:
         )
 
     # Backfill tenants for existing users that have gitea_org but no tenant_id
-    existing_users = await _pool.fetch(
-        "SELECT telegram_id, gitea_org FROM users "
-        "WHERE gitea_org IS NOT NULL AND tenant_id IS NULL"
+    # (only applies when migrating from the old schema that had gitea_org on users)
+    has_gitea_org = await _pool.fetchval(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name='users' AND column_name='gitea_org'"
     )
-    for row in existing_users:
-        tenant_id = await _pool.fetchval(
-            "INSERT INTO tenants (gitea_org) VALUES ($1) "
-            "ON CONFLICT DO NOTHING RETURNING id",
-            row["gitea_org"],
+    if has_gitea_org:
+        existing_users = await _pool.fetch(
+            "SELECT telegram_id, gitea_org FROM users "
+            "WHERE gitea_org IS NOT NULL AND tenant_id IS NULL"
         )
-        if tenant_id is None:
+        for row in existing_users:
             tenant_id = await _pool.fetchval(
-                "SELECT id FROM tenants WHERE gitea_org = $1", row["gitea_org"]
+                "INSERT INTO tenants (gitea_org) VALUES ($1) "
+                "ON CONFLICT DO NOTHING RETURNING id",
+                row["gitea_org"],
             )
-        await _pool.execute(
-            "UPDATE users SET tenant_id = $1, verified = TRUE WHERE telegram_id = $2",
-            tenant_id, row["telegram_id"],
-        )
-        await _pool.execute(
-            "UPDATE apps SET tenant_id = $1, created_by_user_id = $2 "
-            "WHERE telegram_id = $2 AND tenant_id IS NULL",
-            tenant_id, row["telegram_id"],
-        )
+            if tenant_id is None:
+                tenant_id = await _pool.fetchval(
+                    "SELECT id FROM tenants WHERE gitea_org = $1", row["gitea_org"]
+                )
+            await _pool.execute(
+                "UPDATE users SET tenant_id = $1, verified = TRUE WHERE telegram_id = $2",
+                tenant_id, row["telegram_id"],
+            )
+            await _pool.execute(
+                "UPDATE apps SET tenant_id = $1, created_by_user_id = $2 "
+                "WHERE telegram_id = $2 AND tenant_id IS NULL",
+                tenant_id, row["telegram_id"],
+            )
     await _pool.execute("""
         CREATE TABLE IF NOT EXISTS board_cards (
             id          SERIAL PRIMARY KEY,

@@ -39,6 +39,7 @@ export const SignUpSchema = zod.object({
     .string()
     .min(1, { message: 'Password is required!' })
     .min(6, { message: 'Password must be at least 6 characters!' }),
+  inviteCode: zod.string().optional().default(''),
 });
 
 // ----------------------------------------------------------------------
@@ -53,10 +54,11 @@ export function JwtSignUpView() {
   const [errorMessage, setErrorMessage] = useState('');
 
   const defaultValues = {
-    firstName: 'Hello',
-    lastName: 'Friend',
-    email: 'hello@gmail.com',
-    password: '@2Minimal',
+    firstName: '',
+    lastName: '',
+    email: '',
+    password: '',
+    inviteCode: '',
   };
 
   const methods = useForm({
@@ -76,6 +78,7 @@ export function JwtSignUpView() {
         password: data.password,
         firstName: data.firstName,
         lastName: data.lastName,
+        inviteCode: data.inviteCode,
       });
       await checkUserSession?.();
 
@@ -123,6 +126,12 @@ export function JwtSignUpView() {
             ),
           },
         }}
+      />
+
+      <Field.Text
+        name="inviteCode"
+        label="Invite code"
+        slotProps={{ inputLabel: { shrink: true } }}
       />
 
       <Button

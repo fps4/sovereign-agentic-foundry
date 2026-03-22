@@ -53,7 +53,7 @@ make test-intake-l2 BEHAVIORAL_LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-.
 
 # Direct pytest
 BEHAVIORAL_LLM_PROVIDER=anthropic \
-INTAKE_LLM_MODEL=claude-sonnet-4-6 \
+INTAKE_LLM_MODEL=claude-haiku-4-5 \
 ANTHROPIC_API_KEY=sk-ant-... \
 pytest -m behavioral -v
 ```

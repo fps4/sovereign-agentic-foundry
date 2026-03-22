@@ -53,3 +53,32 @@ config:
   - OLLAMA_URL            # http://ollama:11434
   - DATABASE_URL          # asyncpg DSN for message history
   - STANDARDS_PATH        # /standards
+
+testing:
+  primary_signal: spec lock rate on unambiguous inputs (target 100%)
+  secondary_signal: clarifying question count on vague inputs (target ≤3 turns to lock)
+
+  contract:
+    - mock LLM returns question text → spec_locked=false, reply is non-empty string
+    - mock LLM returns valid spec JSON with all required fields → spec_locked=true, AppSpec validates
+    - mock LLM returns malformed JSON → falls back to clarifying question, no 500
+    - mock LLM returns empty string → retries once; returns generic clarifying question on second failure
+    - message with missing tenant_id → 422 validation error, not propagated as inferred value
+
+  behavioral:
+    - "build me an app" → spec_locked=false (premature lock prevention)
+    - "I need a form to collect employee feedback with name, department, and comment fields" → spec_locked=true, app_type=form
+    - "I need a dashboard" → spec_locked=false, reply asks what data to display
+    - "build a workflow tracker for contract approvals with three stages" → spec_locked=true, app_type=workflow
+    - 5-turn multi-turn fixture (starts vague, answers all questions) → spec_locked=true by turn 5
+    - description matching both form and workflow → reply contains explicit app type menu
+
+  quality:
+    - criterion: clarifying question is specific, targets a single unknown, does not repeat prior questions
+      score_range: 0–1
+    - criterion: locked spec requirements are discrete and actionable (not vague like "it should work well")
+      score_range: 0–1
+    - criterion: app_type classification matches human judgment for 10 representative descriptions
+      score_range: 0–1
+
+  fixtures: tests/agents/intake/fixtures/

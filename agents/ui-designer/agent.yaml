@@ -36,3 +36,31 @@ config:
   - UI_DESIGNER_LLM_API_KEY    # required when provider ≠ ollama
   - OLLAMA_URL                 # http://ollama:11434
   - STANDARDS_PATH             # /standards; expects ui-standards.yaml alongside other YAML files
+
+testing:
+  primary_signal: generated HTML is structurally valid and app-type-appropriate
+  secondary_signal: route coverage — every route in the manifest has a corresponding UI element (link, form, or button)
+
+  contract:
+    - mock LLM returns malformed HTML → falls back to typed base template for the given app_type; no 500
+    - empty route manifest → returns single index template; no error
+    - mock LLM failure (exception) → falls back to typed base template, limitation logged
+    - output always has files field as a list, never null
+
+  behavioral:
+    - FORM_SPEC + route manifest → output contains a <form> element, a submit <button>, and a CSRF hidden input
+    - DASHBOARD_SPEC + route manifest → output contains a <table> or <canvas> element for data display
+    - WORKFLOW_SPEC + route manifest → output contains status badges or step indicator elements
+    - ASSISTANT_SPEC + route manifest → output contains a chat message area and a text input for queries
+    - all routes in route manifest → each has at least one <a>, <button>, or <form action="..."> referencing the path
+    - all generated HTML parses without error using an HTML5 parser
+
+  quality:
+    - criterion: all <input> elements have associated <label> elements; forms have accessible submit controls
+      score_range: 0–1
+    - criterion: UI structure is appropriate for the app type (a judge would recognise the layout as the right type)
+      score_range: 0–1
+    - criterion: CSRF token is present on every form that submits data (POST/PUT/DELETE actions)
+      score_range: 0–1
+
+  fixtures: tests/agents/ui-designer/fixtures/

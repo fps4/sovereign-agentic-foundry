@@ -107,3 +107,31 @@ The intake agent does not read or write `apps`, `agent_runs`, or `board_cards`. 
 
 - No timeout on the clarification loop — an operator who never resolves ambiguity will hold a conversation open indefinitely.
 - Spec extraction relies on LLM JSON output; malformed output falls back to asking another clarifying question, which may loop.
+
+## Testing
+
+Two test layers cover the intake agent. All tests live under `tests/agents/intake/`.
+
+| File | Layer | What it covers |
+|------|-------|----------------|
+| `tests/agents/intake/test_contract.py` | L1 Contract | HTTP plumbing, Pydantic validation, `_try_parse_spec` pure-function logic, LLM message construction. No real LLM — uses `MockLLM`. |
+| `tests/agents/intake/test_behavioral.py` | L2 Behavioral | Agent behaviour with a real LLM on representative inputs. Skipped unless `BEHAVIORAL_LLM_PROVIDER` is set. |
+
+**Run L1 (no LLM required):**
+
+```bash
+pytest tests/agents/intake/test_contract.py -v
+# or all contract tests across the suite:
+pytest -m contract -v
+```
+
+**Run L2 (requires a real LLM):**
+
+```bash
+BEHAVIORAL_LLM_PROVIDER=anthropic \
+INTAKE_LLM_MODEL=claude-sonnet-4-6 \
+ANTHROPIC_API_KEY=sk-ant-... \
+pytest tests/agents/intake/test_behavioral.py -v
+```
+
+See `docs/guides/testing.md` for full configuration options including Ollama.

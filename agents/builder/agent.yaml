@@ -47,3 +47,31 @@ config:
   - BUILDER_LLM_API_KEY    # required when provider ≠ ollama
   - OLLAMA_URL             # http://ollama:11434
   - STANDARDS_PATH         # /standards
+
+testing:
+  primary_signal: generated Python files are syntactically valid (ast.parse passes on all .py files)
+  secondary_signal: route manifest completeness — extracted routes match routes implemented in code
+
+  contract:
+    - protected files (Dockerfile, logging.py) in mock LLM output → passed through unchanged from template
+    - mock LLM returns malformed JSON → returns base template files unchanged, no 500, logs status=warning
+    - response always includes routes field → list present even if empty, no missing key
+    - reviewer fix loop: mock fix instructions passed → only LLM-added files are regenerated, template files unchanged
+
+  behavioral:
+    - REFERENCE_BUILD_PLAN (form) → output contains main.py, requirements.txt, README.md
+    - all .py files in output pass ast.parse() without SyntaxError
+    - routes in plan.routes are each represented by at least one decorator in generated code
+    - plan.dependencies are all listed in requirements.txt
+    - assistant build plan → docs/data-ingestion.md present in output files
+    - connector or assistant build plan → docs/api.md present in output files
+
+  quality:
+    - criterion: generated code uses structured JSON logging and reads config from env vars (not hardcoded)
+      score_range: 0–1
+    - criterion: spec requirements are traceable to implemented routes or models in generated code
+      score_range: 0–1
+    - criterion: README.md contains all six required sections with accurate content
+      score_range: 0–1
+
+  fixtures: tests/agents/builder/fixtures/

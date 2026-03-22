@@ -45,3 +45,31 @@ config:
   - WATCHDOG_LLM_MODEL         # model name; provider default if unset
   - WATCHDOG_LLM_API_KEY       # required when provider ≠ ollama
   - OLLAMA_URL                 # http://ollama:11434
+
+testing:
+  primary_signal: deduplication correctness — same error hash reported once per cooldown window (target 100%)
+  secondary_signal: is_breaking classification — unhealthy/exited containers always flagged as breaking
+
+  note: watchdog has no HTTP server; tests drive it by mocking the Docker socket and gateway calls.
+
+  contract:
+    - mock Docker socket returns one container with error log lines → gateway POST /report-issue called once with error_hash
+    - same error log lines on next poll → gateway NOT called again (deduplication via cooldown)
+    - mock container in unhealthy state (no error in logs) → gateway called with is_breaking=true
+    - mock container in exited state → gateway called with is_breaking=true regardless of log content
+    - mock Ollama unavailable → gateway still called; summary is raw log excerpt, not LLM-generated
+    - mock Docker socket returns no containers → gateway is never called
+
+  behavioral:
+    - two different errors in the same container → gateway called twice with two different error_hash values
+    - same error across two different containers → gateway called twice (one per container), each with correct app name
+    - error matching none of the regex patterns → gateway not called (not a recognised error)
+    - after WATCHDOG_COOLDOWN elapses for a container → same error triggers a new gateway call
+
+  quality:
+    - criterion: LLM-generated issue title is concise, actionable, and identifies the failing component
+      score_range: 0–1
+    - criterion: LLM-generated issue body provides enough context for a developer to begin diagnosis
+      score_range: 0–1
+
+  fixtures: tests/agents/watchdog/fixtures/

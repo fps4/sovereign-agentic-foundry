@@ -50,3 +50,27 @@ config:
   - GITEA_ADMIN_PASS
   - TENANT_CONTAINER_READY_TIMEOUT     # 60
   - DATABASE_URL                       # platform Postgres for tenant_resources and app_resources
+
+testing:
+  primary_signal: idempotency — calling provision twice produces the same result with no error (target 100%)
+  secondary_signal: teardown completeness — per-app database and user are absent after teardown
+
+  note: infra uses no LLM; all tests are contract or behavioral only. No quality layer.
+
+  contract:
+    - tenant container already exists in Docker → provision skips container creation, does not error
+    - provision called twice for same app → second call overwrites .env.platform with same credentials, no duplicate DB
+    - mock Docker socket unavailable → provision returns 503, does not write to Gitea
+    - mock Gitea unreachable → provision returns error after container is ready (partial failure path)
+    - teardown for non-existent app → returns 404, does not panic
+
+  behavioral:
+    - provision (postgres) → tenant-{tenant_id}-postgres container running on platform_platform network
+    - provision (postgres) → pgvector extension enabled in the tenant container (SELECT vector IS NOT NULL)
+    - provision → .env.platform written to Gitea repo with a valid asyncpg DSN containing app name
+    - provision → tenant_resources and app_resources rows written to platform Postgres
+    - teardown → per-app database and user dropped; .env.platform deleted from Gitea
+    - teardown with tenant_apps_remaining > 0 → tenant container NOT removed
+    - tenant teardown (last app) → tenant container stopped and removed; tenant_resources row cleared
+
+  fixtures: tests/agents/infra/fixtures/

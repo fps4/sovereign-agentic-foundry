@@ -49,3 +49,31 @@ config:
   - OLLAMA_URL             # http://ollama:11434
   - STANDARDS_PATH         # /standards
   - MAX_PLAN_RETRIES       # 2
+
+testing:
+  primary_signal: BuildPlan schema completeness — all required fields present (target 100%)
+  secondary_signal: template and database selection accuracy per templates.yaml rules
+
+  contract:
+    - mock LLM returns valid BuildPlan JSON → validates against BuildPlan schema, all required fields present
+    - mock LLM returns plan missing required fields → retried with stricter JSON schema prompt
+    - mock LLM fails MAX_PLAN_RETRIES consecutive times → returns 503, build does not proceed
+    - mock LLM returns malformed JSON → treated as validation failure, counted toward MAX_PLAN_RETRIES
+
+  behavioral:
+    - FORM_SPEC → template=fastapi-base, db=sqlite, resources_required=[]
+    - ASSISTANT_SPEC → db=postgres, resources_required contains "postgres"
+    - WORKFLOW_SPEC → db=postgres, files list includes a state or status model file
+    - DASHBOARD_SPEC → frontend=true, frontend_template=mui-minimal
+    - any spec → test_targets non-empty; at least one target per route in plan.routes
+    - spec describing 3 named routes → plan.routes has ≥3 entries
+
+  quality:
+    - criterion: every spec requirement is traceable to at least one file in the plan's file list
+      score_range: 0–1
+    - criterion: pattern selection matches the app type (e.g. workflow → state machine, assistant → RAG)
+      score_range: 0–1
+    - criterion: test_targets are specific and independently testable scenarios, not vague statements
+      score_range: 0–1
+
+  fixtures: tests/agents/planner/fixtures/

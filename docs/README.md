@@ -69,3 +69,4 @@
 |------|-------------|
 | [`guides/setup.md`](guides/setup.md) | First-time setup from scratch |
 | [`guides/deployment.md`](guides/deployment.md) | Deploying and managing the stack |
+| [`guides/testing.md`](guides/testing.md) | Running tests at each layer, configuring LLM for behavioral tests, adding tests for a new agent |

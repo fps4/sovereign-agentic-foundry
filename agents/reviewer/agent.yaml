@@ -40,3 +40,31 @@ config:
   - REVIEWER_LLM_API_KEY    # required when provider ≠ ollama
   - OLLAMA_URL              # http://ollama:11434
   - STANDARDS_PATH          # /standards; reviewer loads all YAML files at startup
+
+testing:
+  primary_signal: known-violation catch rate — planted violations are caught (target 100% for static rules)
+  secondary_signal: false positive rate — clean REFERENCE_FILES pass without spurious blocks (target 0%)
+
+  contract:
+    - REFERENCE_FILES (known-good build) → verdict=approved
+    - file containing FROM python:3.12 without digest → verdict=blocked, security.yaml rule cited
+    - file containing SECRET_KEY = "hardcoded" → verdict=blocked, fix_instruction references that file
+    - file named myRoutes.py (camelCase) → verdict=blocked, naming.yaml rule cited
+    - mock LLM returns unparseable verdict → treated as pass, warning logged, no 500
+
+  behavioral:
+    - Dockerfile with USER root → verdict=blocked, fix_instruction says to add non-root user
+    - Python file with f"SELECT * FROM {table}" → verdict=blocked, security rule cited
+    - file missing GET /health endpoint → verdict=blocked, patterns.yaml rule cited
+    - REFERENCE_FILES run 5 times → verdict=approved all 5 times (consistency check)
+    - VIOLATION_FILES set (10 files, each with one planted violation) → each file blocked with correct rule
+
+  quality:
+    - criterion: fix instructions reference a specific file, describe the exact issue, and give an actionable fix
+      score_range: 0–1
+    - criterion: verdict consistency — same file submitted 5× receives the same verdict each time
+      score_range: 0–1  # measured as fraction of consistent results
+    - criterion: LLM semantic review catches logic-level issues that static rules cannot (e.g. SQL injection via ORM misuse)
+      score_range: 0–1
+
+  fixtures: tests/agents/reviewer/fixtures/

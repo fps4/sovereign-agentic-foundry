@@ -21,7 +21,7 @@ from agentic_standards.router import LLMRouter, ModelTier
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 AGENT_PATH = Path(__file__).parent
 PROMPTS_PATH = AGENT_PATH / "prompts"
 
@@ -42,7 +42,7 @@ class IntakeAgent(BaseAgent):
         if per_agent_model:
             from agentic_standards.router import _DEFAULT_MODEL_MAP
             model_map = {**_DEFAULT_MODEL_MAP, ModelTier.STANDARD: per_agent_model}
-        self.llm = LLMRouter(model_map=model_map, api_base=OLLAMA_URL)
+        self.llm = LLMRouter(model_map=model_map)
         self.system_prompt: str = ""
 
     def load_prompts(self) -> None:
@@ -147,7 +147,7 @@ async def intake(req: IntakeRequest) -> IntakeResponse:
 
     spec = _try_parse_spec(raw)
     if spec:
-        agent.log.info("intake.spec_locked", extra={"name": spec.name, "app_type": spec.app_type})
+        agent.log.info("intake.spec_locked", extra={"spec_name": spec.name, "app_type": spec.app_type})
         await agent.run_log(req.run_id, "intake.done", {"spec_name": spec.name, "status": "ready"})
         return IntakeResponse(
             run_id=req.run_id,
@@ -173,7 +173,7 @@ async def health() -> dict:
 async def ready() -> dict:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{OLLAMA_URL}/api/tags")
+            resp = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
             resp.raise_for_status()
         return {"status": "ok"}
     except Exception:

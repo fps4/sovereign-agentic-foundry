@@ -53,3 +53,31 @@ config:
   - GITEA_ADMIN_USER
   - GITEA_ADMIN_PASS
   - ORCHESTRATOR_URL               # http://gateway:8000
+
+testing:
+  primary_signal: correct error categorization (target 100% for infra vs patchable distinction)
+  secondary_signal: infra-level errors escalate immediately without calling planner or builder
+
+  contract:
+    - request with error_category=infra (OOM signal in logs) → escalates immediately; planner is NOT called
+    - request with remediation_attempts >= MAX_RETRIES → escalates immediately without new repair attempt
+    - mock Gitea unreachable → returns error to gateway, does not attempt repair
+    - mock Ollama unreachable → escalates immediately; does not block on LLM unavailability
+    - on repair attempt: planner called with original spec AND repair_instructions in request body
+
+  behavioral:
+    - ImportError stack trace in logs → error_category=import_failure, planner called with patch scope
+    - missing env var crash (KeyError on os.getenv) → error_category=config_error
+    - planner call for patch → request body contains repair_context, not a full rebuild plan request
+    - after repair: builder called with patch plan, reviewer called with builder output
+    - escalation message → gateway called with apps.status = needs_human
+
+  quality:
+    - criterion: patch plan targets only the files implicated by the error, not a full rebuild
+      score_range: 0–1
+    - criterion: escalation summary is understandable by a non-developer operator (plain language, no stack trace dumps)
+      score_range: 0–1
+    - criterion: error category matches human judgment for 10 representative error log fixtures
+      score_range: 0–1
+
+  fixtures: tests/agents/remediation/fixtures/

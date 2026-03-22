@@ -37,3 +37,24 @@ config:
   - ACCEPTANCE_STARTUP_WAIT      # 60 seconds
   - ACCEPTANCE_RETRY_INTERVAL    # 5 seconds between startup retries
   - ACCEPTANCE_REQUEST_TIMEOUT   # 10 seconds per request
+
+testing:
+  primary_signal: correct pass/fail classification — healthy app → passed=true, broken app → passed=false
+  secondary_signal: per-route result completeness — results list contains one entry per derived route
+
+  note: acceptance uses no LLM; all tests are contract or behavioral only. No quality layer.
+
+  contract:
+    - mock HTTP server returning 200 on all routes → passed=true, results contains each route
+    - mock HTTP server returning 503 → passed=false, failures contains the failing route with status
+    - GET /health times out (mock server never responds within ACCEPTANCE_REQUEST_TIMEOUT) → passed=false, reason=timeout
+    - spec with 3 routes → results has exactly 3 entries after a successful check
+    - gateway receives failures field as a list, never null, even when passed=true
+
+  behavioral:
+    - real FastAPI template app (fastapi-base) started locally → passed=true within ACCEPTANCE_STARTUP_WAIT
+    - app with one route returning 500 → passed=false, failures identifies that route, other routes pass
+    - slow-starting app (sleeps 5s before /health returns 200) → retries succeed; passed=true
+    - app with POST route → write-path request uses well-formed synthetic payload; 4xx not treated as acceptance failure
+
+  fixtures: tests/agents/acceptance/fixtures/

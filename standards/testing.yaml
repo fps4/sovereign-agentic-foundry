@@ -1,0 +1,96 @@
+---
+# Agent quality testing strategy
+# Three layers per agent: contract (always), behavioral (CI on main), quality (scheduled)
+
+layers:
+  contract:
+    description: >
+      Mock the LLM. Validate plumbing: request/response schema, error handling, fallback
+      logic, and standards loading. Fast and deterministic — must pass on every commit.
+    llm: mocked
+    ci_gate: required on every PR
+    timeout: 10s
+
+  behavioral:
+    description: >
+      Real LLM, representative input fixtures. Validate that the agent does the right
+      thing on known inputs. Evaluation criteria are deterministic (field presence, schema
+      validation, syntax checks, count assertions) even though the LLM output varies.
+    llm: real
+    ci_gate: required on merge to main
+    timeout: 60s
+
+  quality:
+    description: >
+      LLM-as-judge scoring. Rate subjective dimensions (question clarity, fix instruction
+      specificity, code quality) on a 0–1 scale. Run on a schedule and before releases.
+      Produces quality-report.json for regression tracking. Results are advisory — they
+      alert but do not block the pipeline unless a dimension drops >10% from baseline.
+    llm: real (agent under test) + real (judge)
+    judge_model: claude-sonnet-4-6
+    ci_gate: advisory — alert on >10% regression vs stored baseline
+    timeout: 600s
+
+# ── Test infrastructure ────────────────────────────────────────────────────────
+
+infrastructure:
+  mock_llm:
+    path: tests/lib/mock_llm.py
+    description: >
+      Configurable drop-in for LLMRouter. Accepts a list of string responses and returns
+      them in sequence. Allows contract tests to run in milliseconds without Ollama.
+
+  evaluator:
+    path: tests/lib/evaluators.py
+    description: >
+      LLM-as-judge scorer used in quality layer only. Sends the agent output and a
+      structured rubric to Claude; returns a 0–1 float per criterion.
+
+  harness:
+    path: tests/lib/harness.py
+    description: >
+      httpx.AsyncClient wrapper for agent HTTP endpoints. Targets running containers via
+      AGENT_BASE_URL env var. Used in behavioral and quality layer tests.
+
+  shared_fixtures:
+    path: tests/lib/fixtures.py
+    contents:
+      - FORM_SPEC, DASHBOARD_SPEC, WORKFLOW_SPEC, CONNECTOR_SPEC, ASSISTANT_SPEC
+      - REFERENCE_BUILD_PLAN       # known-good planner output per app type
+      - REFERENCE_FILES            # known-good builder file set per app type
+      - VIOLATION_FILES            # files with planted naming/security/pattern violations
+      - MULTI_TURN_CONVERSATIONS   # intake conversation fixtures (vague, complete, edge cases)
+
+# ── CI integration ─────────────────────────────────────────────────────────────
+
+ci:
+  on_pr:
+    command: pytest tests/agents/ -m contract --timeout=10
+  on_main:
+    command: pytest tests/agents/ -m "contract or behavioral" --timeout=60
+  scheduled:
+    command: pytest tests/agents/ -m quality --timeout=600 --report=quality-report.json
+    cadence: weekly and before every release
+
+# ── Quality regression tracking ────────────────────────────────────────────────
+
+quality_regression:
+  stored_per_agent: true         # baseline per agent, per dimension
+  alert_threshold: 10%           # alert if any dimension drops >10% from baseline
+  report_format: quality-report.json
+
+# ── Agent test locations ───────────────────────────────────────────────────────
+
+test_locations:
+  intake:       tests/agents/intake/
+  planner:      tests/agents/planner/
+  builder:      tests/agents/builder/
+  ui-designer:  tests/agents/ui-designer/
+  reviewer:     tests/agents/reviewer/
+  test-writer:  tests/agents/test-writer/
+  acceptance:   tests/agents/acceptance/
+  remediation:  tests/agents/remediation/
+  watchdog:     tests/agents/watchdog/
+  infra:        tests/agents/infra/
+
+# Per-agent testing specifics live in each agent's agent.yaml under the `testing:` key.

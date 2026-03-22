@@ -22,8 +22,8 @@ from agentic_standards.router import LLMRouter, ModelTier
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-STANDARDS_PATH = Path(os.getenv("STANDARDS_PATH", "/standards"))
-PROMPTS_PATH = Path(__file__).parent / "prompts"
+AGENT_PATH = Path(__file__).parent
+PROMPTS_PATH = AGENT_PATH / "prompts"
 
 APP_TYPES = ["form", "dashboard", "workflow", "connector", "assistant"]
 
@@ -51,7 +51,7 @@ class IntakeAgent(BaseAgent):
             raise RuntimeError(f"System prompt not found: {prompt_file}")
         base = prompt_file.read_text()
 
-        agent_standard = STANDARDS_PATH / "agents" / "intake.yaml"
+        agent_standard = AGENT_PATH / "agent.yaml"
         if agent_standard.exists():
             base += f"\n\n--- AGENT STANDARDS ---\n{agent_standard.read_text()}"
 
@@ -64,7 +64,7 @@ agent = IntakeAgent()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     agent.load_prompts()
-    agent.log.info("intake.startup", extra={"standards_path": str(STANDARDS_PATH)})
+    agent.log.info("intake.startup", extra={"agent_path": str(AGENT_PATH)})
     yield
     await agent.close()
 

@@ -148,7 +148,9 @@ services:
       dockerfile: intake/Dockerfile
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      MODEL_FAST: ${MODEL_FAST:-ollama/llama3.1:8b}
+      MODEL_STANDARD: ${MODEL_STANDARD:-ollama/llama3.1:8b}
+      MODEL_STRONG: ${MODEL_STRONG:-ollama/llama3.1:8b}
     depends_on:
       - ollama
     healthcheck:

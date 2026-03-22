@@ -52,6 +52,8 @@ _DEFAULT_MODEL_MAP: dict[ModelTier, str] = {
 
 _DEFAULT_API_BASE = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
 
+_UNSET = object()  # sentinel — distinguishes "not passed" from explicit None
+
 
 class LLMRouter:
     """
@@ -68,10 +70,12 @@ class LLMRouter:
     def __init__(
         self,
         model_map: dict[ModelTier, str] | None = None,
-        api_base: str | None = None,
+        api_base: str | None = _UNSET,  # type: ignore[assignment]
     ) -> None:
         self._model_map = model_map or _DEFAULT_MODEL_MAP
-        self._api_base = api_base or _DEFAULT_API_BASE
+        # Explicit None → do not pass api_base to litellm (cloud providers).
+        # Unset → fall back to OLLAMA_BASE_URL default.
+        self._api_base = _DEFAULT_API_BASE if api_base is _UNSET else api_base
 
     def resolve(self, tier: ModelTier) -> str:
         """Return the concrete model identifier for a given tier."""
@@ -114,9 +118,10 @@ class LLMRouter:
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "api_base": self._api_base,
             **kwargs,
         }
+        if self._api_base is not None:
+            call_kwargs["api_base"] = self._api_base
         if response_format:
             call_kwargs["response_format"] = response_format
 

@@ -29,10 +29,13 @@ No additional packages are needed beyond what each agent already requires. The t
 No environment setup needed. Run from the repo root:
 
 ```bash
-# All contract tests
+# Via make (preferred)
+make test-intake-l1
+
+# Direct pytest — all contract tests
 pytest -m contract -v
 
-# Intake agent only
+# Direct pytest — intake agent only
 pytest tests/agents/intake/test_contract.py -v
 ```
 
@@ -45,6 +48,10 @@ L2 tests are skipped unless `BEHAVIORAL_LLM_PROVIDER` is set. Choose a provider:
 **Anthropic (recommended for output quality):**
 
 ```bash
+# Via make
+make test-intake-l2 BEHAVIORAL_LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-...
+
+# Direct pytest
 BEHAVIORAL_LLM_PROVIDER=anthropic \
 INTAKE_LLM_MODEL=claude-sonnet-4-6 \
 ANTHROPIC_API_KEY=sk-ant-... \
@@ -54,6 +61,10 @@ pytest -m behavioral -v
 **OpenAI:**
 
 ```bash
+# Via make
+make test-intake-l2 BEHAVIORAL_LLM_PROVIDER=openai INTAKE_LLM_MODEL=gpt-4o OPENAI_API_KEY=sk-...
+
+# Direct pytest
 BEHAVIORAL_LLM_PROVIDER=openai \
 INTAKE_LLM_MODEL=gpt-4o \
 OPENAI_API_KEY=sk-... \
@@ -63,6 +74,10 @@ pytest -m behavioral -v
 **Ollama (local, no API key):**
 
 ```bash
+# Via make
+make test-intake-l2 BEHAVIORAL_LLM_PROVIDER=ollama
+
+# Direct pytest
 BEHAVIORAL_LLM_PROVIDER=ollama \
 OLLAMA_BASE_URL=http://localhost:11434 \
 pytest -m behavioral -v

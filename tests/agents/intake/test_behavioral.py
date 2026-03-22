@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 
 from main import agent
 from agentic_standards.contracts.agent_io import AppSpec
-from agentic_standards.router import LLMRouter
+from agentic_standards.router import LLMRouter, ModelTier
 from tests.lib.fixtures import (
     VAGUE_MESSAGES,
     FORM_SPEC_MESSAGE,
@@ -48,10 +48,27 @@ _skip_if_no_llm = pytest.mark.skipif(
 def configure_real_llm():
     """Reset agent.llm to a real LLMRouter before behavioral tests run.
 
+    Builds the router for the provider set in BEHAVIORAL_LLM_PROVIDER:
+      - anthropic → anthropic/<model>, no api_base
+      - openai    → openai/<model>, no api_base
+      - ollama    → ollama/<model>, OLLAMA_BASE_URL
+
     The disable_run_log autouse fixture from conftest.py still applies,
     so run_log calls remain suppressed.
     """
-    agent.llm = LLMRouter()
+    provider = os.environ.get("BEHAVIORAL_LLM_PROVIDER", "ollama")
+    model = os.environ.get("INTAKE_LLM_MODEL", "llama3.1:8b")
+
+    if provider == "anthropic":
+        model_map = {tier: f"anthropic/{model}" for tier in ModelTier}
+        agent.llm = LLMRouter(model_map=model_map, api_base=None)
+    elif provider == "openai":
+        model_map = {tier: f"openai/{model}" for tier in ModelTier}
+        agent.llm = LLMRouter(model_map=model_map, api_base=None)
+    else:  # ollama
+        ollama_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        model_map = {tier: f"ollama/{model}" for tier in ModelTier}
+        agent.llm = LLMRouter(model_map=model_map, api_base=ollama_base)
     yield
 
 

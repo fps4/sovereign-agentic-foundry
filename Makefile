@@ -84,6 +84,26 @@ test-chat:                 ## Run chat integration tests
 .PHONY: test
 test: test-registration test-chat  ## Run all integration tests
 
+# ── Agent unit tests ───────────────────────────────────────────────────────────
+
+# L2 provider: anthropic | openai | ollama  (see docs/guides/testing.md)
+BEHAVIORAL_LLM_PROVIDER ?=
+INTAKE_LLM_MODEL        ?= claude-sonnet-4-6
+OLLAMA_BASE_URL         ?= http://localhost:11434
+
+.PHONY: test-intake-l1
+test-intake-l1:            ## L1 contract tests for intake agent (no LLM, < 10 s)
+	pytest tests/agents/intake/test_contract.py -v
+
+.PHONY: test-intake-l2
+test-intake-l2:            ## L2 behavioral tests for intake agent (set BEHAVIORAL_LLM_PROVIDER=anthropic|openai|ollama)
+	BEHAVIORAL_LLM_PROVIDER=$(BEHAVIORAL_LLM_PROVIDER) \
+	  INTAKE_LLM_MODEL=$(INTAKE_LLM_MODEL) \
+	  ANTHROPIC_API_KEY=$(ANTHROPIC_API_KEY) \
+	  OPENAI_API_KEY=$(OPENAI_API_KEY) \
+	  OLLAMA_BASE_URL=$(OLLAMA_BASE_URL) \
+	  pytest tests/agents/intake/test_behavioral.py -v
+
 # ── Help ───────────────────────────────────────────────────────────────────────
 
 .PHONY: help
